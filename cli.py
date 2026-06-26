@@ -63,6 +63,7 @@ async def main():
                 table.add_column("Description", style="white")
                 table.add_row("/help", "Show this help menu")
                 table.add_row("/clear", "Clear the terminal screen")
+                table.add_row("/index", "Aggressively crawl codebase and push architecture into Graph Memory")
                 table.add_row("/compact", "Reset short-term memory to save tokens (keeps long-term graph memory)")
                 table.add_row("/memory", "Manually query the Cognee Knowledge Graph")
                 console.print(table)
@@ -71,6 +72,23 @@ async def main():
             if cmd == "/clear":
                 import os
                 os.system('cls' if os.name == 'nt' else 'clear')
+                continue
+                
+            if cmd == "/index":
+                with console.status("[bold magenta]Aggressively Indexing Codebase to Graph Database...") as status:
+                    import cognee
+                    import glob
+                    files_added = 0
+                    for filepath in glob.glob(os.path.join('.', '**', '*.*'), recursive=True):
+                        if 'node_modules' in filepath or '.git' in filepath or 'venv' in filepath or '__pycache__' in filepath:
+                            continue
+                        try:
+                            await cognee.add(f"Project Architecture Node: {filepath}", dataset_name="codebase_architecture")
+                            files_added += 1
+                        except:
+                            pass
+                    await cognee.cognify()
+                    console.print(f"[bold green]✅ Success: {files_added} files mathematically mapped into Cognee Graph.[/bold green]")
                 continue
                 
             if cmd == "/compact":
@@ -124,13 +142,15 @@ async def main():
                 elif func_name == "search_codebase":
                     console.print(f"[yellow]Searching codebase for:[/yellow] '{args.get('query')}' in {args.get('directory')}")
 
-            # --- AUTO-RAG (Memory Retrieval) ---
+            # --- AUTO-RAG (Deep Memory Retrieval) ---
             import cognee
             past_context = ""
             try:
-                retrieved_memories = await cognee.search("SEARCH_TYPE_INSIGHTS", query_text=user_input)
+                # Pull denser information from the graph
+                deep_query = f"User Request: {user_input} | Recent Agent Tool Actions and File Edits"
+                retrieved_memories = await cognee.search("SEARCH_TYPE_INSIGHTS", query_text=deep_query)
                 if retrieved_memories:
-                    past_context = "\n\n<past_context>\n" + "\n".join(str(r) for r in retrieved_memories) + "\n</past_context>"
+                    past_context = "\n\n<deep_graph_context>\n" + "\n".join(str(r) for r in retrieved_memories) + "\n</deep_graph_context>"
             except Exception:
                 pass
                 

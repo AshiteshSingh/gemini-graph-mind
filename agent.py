@@ -198,7 +198,7 @@ class OmniDevAgent:
         except Exception as e:
             return f"Error writing file: {e}"
 
-    def _tool_edit_file(self, path: str, target_content: str, replacement_content: str) -> str:
+    async def _tool_edit_file(self, path: str, target_content: str, replacement_content: str) -> str:
         try:
             if not os.path.exists(path):
                 return f"Error: File {path} does not exist. Use write_file to create it."
@@ -209,11 +209,16 @@ class OmniDevAgent:
             new_content = content.replace(target_content, replacement_content, 1)
             with open(path, "w", encoding="utf-8") as f:
                 f.write(new_content)
+                
+            # Aggressive Telemetry Logging
+            await cognee.add(f"Agent edited file {path}. Replaced:\n{target_content}\nWith:\n{replacement_content}", dataset_name="agent_telemetry")
+            await cognee.cognify()
+            
             return f"Successfully edited {path} using smart chunk replacement."
         except Exception as e:
             return f"Error editing file: {e}"
 
-    def _tool_run_command(self, command: str) -> str:
+    async def _tool_run_command(self, command: str) -> str:
         SAFE_COMMANDS = ["git status", "git diff", "git log", "git branch", "dir", "ls", "pwd", "tree", "date", "whoami", "npm run dev"]
         
         is_safe = False
@@ -232,6 +237,11 @@ class OmniDevAgent:
         try:
             result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
             output = result.stdout + "\n" + result.stderr
+            
+            # Aggressive Telemetry Logging
+            await cognee.add(f"Agent ran terminal command: {command}\nOutput: {output}", dataset_name="agent_telemetry")
+            await cognee.cognify()
+            
             return output if output.strip() else "Command executed successfully with no output."
         except subprocess.TimeoutExpired:
             return "Command timed out."
@@ -347,9 +357,9 @@ class OmniDevAgent:
                     elif func_name == "write_file":
                         result = self._tool_write_file(**args)
                     elif func_name == "edit_file":
-                        result = self._tool_edit_file(**args)
+                        result = await self._tool_edit_file(**args)
                     elif func_name == "run_command":
-                        result = self._tool_run_command(**args)
+                        result = await self._tool_run_command(**args)
                     elif func_name == "remember":
                         result = await self._tool_remember(**args)
                     elif func_name == "recall":
