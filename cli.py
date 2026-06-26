@@ -99,9 +99,29 @@ async def main():
                 elif func_name == "search_codebase":
                     console.print(f"[yellow]Searching codebase for:[/yellow] '{args.get('query')}' in {args.get('directory')}")
 
+            # --- AUTO-RAG (Memory Retrieval) ---
+            import cognee
+            past_context = ""
+            try:
+                retrieved_memories = await cognee.search("SEARCH_TYPE_INSIGHTS", query_text=user_input)
+                if retrieved_memories:
+                    past_context = "\n\n<past_context>\n" + "\n".join(str(r) for r in retrieved_memories) + "\n</past_context>"
+            except Exception:
+                pass
+                
+            augmented_prompt = f"{user_input}{past_context}"
+
             # Execute task with a spinner
             with console.status("[bold green]Omni-Dev is thinking and acting...") as status:
-                final_response = await agent.execute_task(user_input, progress_callback=tool_callback)
+                final_response = await agent.execute_task(augmented_prompt, progress_callback=tool_callback)
+                
+                # --- AUTO-JOURNALING (Memory Storage) ---
+                try:
+                    journal_entry = f"User Request: {user_input}\nOmni-Dev Response: {final_response}"
+                    await cognee.add(journal_entry, dataset_name="user_memory")
+                    await cognee.cognify()
+                except Exception:
+                    pass
 
             # Print final response beautifully
             console.print("\n[bold cyan]Omni-Dev:[/bold cyan]")
