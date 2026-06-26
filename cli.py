@@ -56,15 +56,23 @@ async def main():
                 break
                 
             if user_input.strip().lower() == "/memory":
-                query = Prompt.ask("[italic]What memory do you want to recall?[/italic]")
-                with console.status("[bold magenta]Querying Cognee Knowledge Graph...") as status:
+                query = Prompt.ask("[italic]What memory do you want to recall from the Knowledge Graph?[/italic]")
+                with console.status("[bold magenta]Querying Cognee Graph Database for Long-Term Memory...") as status:
                     import cognee
+                    from rich.table import Table
                     results = await cognee.search("SEARCH_TYPE_INSIGHTS", query_text=query)
+                    
                     if results:
+                        console.print("\n[bold green]✅ AI Amnesia Solved. Memories retrieved:[/bold green]")
+                        table = Table(title="🧠 Cognee Knowledge Graph Insights", border_style="magenta")
+                        table.add_column("Memory / Insight", style="cyan")
+                        
                         for res in results:
-                            console.print(f"- {res}")
+                            table.add_row(str(res))
+                            
+                        console.print(table)
                     else:
-                        console.print("[italic]Nothing found.[/italic]")
+                        console.print("[italic red]No relevant long-term memories found in the graph.[/italic red]")
                 continue
 
             if not user_input.strip():
@@ -82,6 +90,14 @@ async def main():
                     console.print(f"[magenta]Storing memory:[/magenta] {args.get('fact')}")
                 elif func_name == "recall":
                     console.print(f"[magenta]Searching memory for:[/magenta] {args.get('query')}")
+                elif func_name == "spawn_subagent":
+                    console.print(f"[bold cyan]Spawning Sub-Agent for:[/bold cyan] {args.get('task_description')}")
+                elif func_name == "search_web":
+                    console.print(f"[yellow]Searching web (SearXNG):[/yellow] {args.get('query')}")
+                elif func_name == "think":
+                    console.print(f"[bold cyan]Omni-Dev is thinking:[/bold cyan] {args.get('thought')}")
+                elif func_name == "search_codebase":
+                    console.print(f"[yellow]Searching codebase for:[/yellow] '{args.get('query')}' in {args.get('directory')}")
 
             # Execute task with a spinner
             with console.status("[bold green]Omni-Dev is thinking and acting...") as status:

@@ -3,6 +3,7 @@ import sys
 import subprocess
 import asyncio
 import uuid
+import requests
 import vertexai
 from vertexai.generative_models import (
     FunctionDeclaration,
@@ -86,6 +87,43 @@ spawn_subagent_func = FunctionDeclaration(
     }
 )
 
+search_web_func = FunctionDeclaration(
+    name="search_web",
+    description="Search the internet using SearXNG. Use this to find up-to-date information, documentation, or solutions.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "The search query string."}
+        },
+        "required": ["query"]
+    }
+)
+
+think_func = FunctionDeclaration(
+    name="think",
+    description="Use this tool to think out loud, reason through complex bugs, or architect a plan before taking action. Your thoughts will be saved to memory.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "thought": {"type": "string", "description": "Your detailed reasoning or architectural plan."}
+        },
+        "required": ["thought"]
+    }
+)
+
+search_codebase_func = FunctionDeclaration(
+    name="search_codebase",
+    description="Search the local codebase for a text pattern or regex (similar to grep). Use this to quickly find where functions or variables are defined without reading whole files.",
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "description": "The regex or text pattern to search for."},
+            "directory": {"type": "string", "description": "The directory to search in (use '.' for root)."}
+        },
+        "required": ["query", "directory"]
+    }
+)
+
 omni_tools = Tool(
     function_declarations=[
         read_file_func,
@@ -93,7 +131,10 @@ omni_tools = Tool(
         run_command_func,
         remember_func,
         recall_func,
-        spawn_subagent_func
+        spawn_subagent_func,
+        search_web_func,
+        think_func,
+        search_codebase_func
     ]
 )
 
@@ -134,8 +175,22 @@ class OmniDevAgent:
             return f"Error writing file: {e}"
 
     def _tool_run_command(self, command: str) -> str:
+        SAFE_COMMANDS = ["git status", "git diff", "git log", "git branch", "dir", "ls", "pwd", "tree", "date", "whoami", "npm run dev"]
+        
+        is_safe = False
+        cmd_lower = command.lower().strip()
+        for safe in SAFE_COMMANDS:
+            if cmd_lower.startswith(safe):
+                is_safe = True
+                break
+                
+        if not is_safe:
+            print(f"\n\033[91m[SECURITY WARNING] Omni-Dev wants to run a dangerous command:\033[0m {command}")
+            user_approval = input("\033[93mAllow this command? (y/n): \033[0m").strip().lower()
+            if user_approval != 'y':
+                return "Command execution rejected by user."
+
         try:
-            # We run the command and capture output
             result = subprocess.run(command, shell=True, capture_output=True, text=True, timeout=30)
             output = result.stdout + "\n" + result.stderr
             return output if output.strip() else "Command executed successfully with no output."
@@ -182,6 +237,53 @@ class OmniDevAgent:
         except Exception as e:
             return f"Error spawning subagent: {e}"
 
+    def _tool_search_web(self, query: str) -> str:
+        try:
+            # Using a public SearXNG instance or one defined in env
+            searxng_url = os.environ.get("SEARXNG_URL", "https://searx.be")
+            response = requests.get(
+                f"{searxng_url}/search",
+                params={"q": query, "format": "json"},
+                timeout=15
+            )
+            if response.status_code == 200:
+                results = response.json().get("results", [])
+                if not results:
+                    return "No results found."
+                # Format the top 5 results
+                formatted = [f"Title: {r.get('title')}\nURL: {r.get('url')}\nContent: {r.get('content')}" for r in results[:5]]
+                return "\n\n".join(formatted)
+            else:
+                return f"Search failed with status code {response.status_code}"
+        except Exception as e:
+            return f"Error searching the web: {e}"
+
+    async def _tool_think(self, thought: str) -> str:
+        await self._tool_remember(f"Thought Process: {thought}")
+        return "Thought logged to memory successfully."
+
+    def _tool_search_codebase(self, query: str, directory: str) -> str:
+        try:
+            import glob
+            import re
+            results = []
+            for filepath in glob.glob(os.path.join(directory, '**', '*.*'), recursive=True):
+                if 'node_modules' in filepath or '.git' in filepath or 'venv' in filepath:
+                    continue
+                try:
+                    with open(filepath, 'r', encoding='utf-8') as f:
+                        lines = f.readlines()
+                        for i, line in enumerate(lines):
+                            if re.search(query, line):
+                                results.append(f"{filepath}:{i+1}: {line.strip()}")
+                except:
+                    pass
+            if results:
+                return "\n".join(results[:50])
+            return "No matches found."
+        except Exception as e:
+            return f"Error searching codebase: {e}"
+
     async def execute_task(self, prompt: str, progress_callback=None):
         """
         Sends the prompt to Gemini and automatically handles tool calls in a loop
@@ -213,6 +315,12 @@ class OmniDevAgent:
                         result = await self._tool_recall(**args)
                     elif func_name == "spawn_subagent":
                         result = self._tool_spawn_subagent(**args)
+                    elif func_name == "search_web":
+                        result = self._tool_search_web(**args)
+                    elif func_name == "think":
+                        result = await self._tool_think(**args)
+                    elif func_name == "search_codebase":
+                        result = self._tool_search_codebase(**args)
                     else:
                         result = f"Unknown tool: {func_name}"
 
