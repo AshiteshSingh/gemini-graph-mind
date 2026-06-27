@@ -83,7 +83,7 @@ async def main():
     # Setup interactive PromptSession with autocomplete & live status bar
     try:
         from prompt_toolkit import PromptSession
-        from prompt_toolkit.completion import WordCompleter, FuzzyCompleter
+        from prompt_toolkit.completion import Completer, Completion
         from prompt_toolkit.formatted_text import HTML
         from prompt_toolkit.styles import Style
 
@@ -92,7 +92,22 @@ async def main():
             "/review", "/ctx_viz", "/config", "/compact", "/memory", "/index",
             "/history", "/commit", "/pwd", "/ls", "/clear", "exit", "quit", "?"
         ]
-        completer = FuzzyCompleter(WordCompleter(commands_list, ignore_case=True))
+
+        class SlashCommandCompleter(Completer):
+            def __init__(self, cmds):
+                self.cmds = sorted(cmds)
+            def get_completions(self, document, complete_event):
+                text = document.text_before_cursor.lstrip()
+                if text.startswith("/"):
+                    for cmd in self.cmds:
+                        if cmd.startswith(text.lower()):
+                            yield Completion(cmd, start_position=-len(text))
+                elif text.lower() in ("e", "ex", "exi", "exit", "q", "qu", "qui", "quit", "?"):
+                    for cmd in ("exit", "quit", "?"):
+                        if cmd.startswith(text.lower()):
+                            yield Completion(cmd, start_position=-len(text))
+
+        completer = SlashCommandCompleter(commands_list)
 
         style = Style.from_dict({
             'bottom-toolbar': 'bg:#1e1e1e #cccccc',
@@ -510,7 +525,9 @@ async def main():
 
             # Render Response
             console.print("\n" + "─" * 75)
-            console.print(Panel(Markdown(final_response), title="[bold cyan]Omni-Dev[/bold cyan]", border_style="cyan"))
+            console.print("[bold cyan]✨ Omni-Dev[/bold cyan]\n")
+            console.print(Markdown(final_response))
+            console.print("\n" + "─" * 75)
             console.print()
 
         except KeyboardInterrupt:
