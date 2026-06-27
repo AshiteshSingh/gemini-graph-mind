@@ -1,0 +1,164 @@
+"""
+browser_tool.py - Human-like Browser Automation Tool for Omni-Dev
+
+Uses Playwright to let the agent open a real browser window, navigate URLs,
+click buttons, type text, scroll pages, and extract data just like a real human.
+"""
+import asyncio
+import os
+from typing import Any, Dict, Optional
+from src.tools.base_tool import BaseTool
+
+# Global browser state to maintain session across multiple tool calls
+_pw_instance = None
+_browser_instance = None
+_page_instance = None
+
+
+async def _get_page(headless: bool = False):
+    global _pw_instance, _browser_instance, _page_instance
+    from playwright.async_api import async_playwright
+
+    if _page_instance is not None and not _page_instance.is_closed():
+        return _page_instance
+
+    if _pw_instance is None:
+        _pw_instance = await async_playwright().start()
+
+    if _browser_instance is None or not _browser_instance.is_connected():
+        # slow_mo=75 adds a natural human delay between keystrokes and clicks
+        _browser_instance = await _pw_instance.chromium.launch(
+            headless=headless,
+            slow_mo=75,
+            args=["--start-maximized", "--disable-infobars"]
+        )
+
+    # Use viewport None to allow maximized or natural window resizing
+    context = await _browser_instance.new_context(viewport={"width": 1280, "height": 800})
+    _page_instance = await context.new_page()
+    return _page_instance
+
+
+class BrowserTool(BaseTool):
+    """Tool allowing the agent to control a web browser like a human."""
+
+    @property
+    def name(self) -> str:
+        return "browser_action"
+
+    @property
+    def description(self) -> str:
+        return (
+            "Control a web browser like a real human. Can open visible browser windows, navigate URLs, "
+            "click buttons/links, type text into input boxes, scroll pages, extract text content, and take screenshots."
+        )
+
+    @property
+    def parameters(self) -> Dict[str, Any]:
+        return {
+            "action": {
+                "type": "string",
+                "enum": ["goto", "click", "type", "scroll", "extract", "screenshot", "close"],
+                "description": "The action to perform in the browser."
+            },
+            "url": {
+                "type": "string",
+                "description": "URL to navigate to (for 'goto' action). e.g. 'https://google.com'."
+            },
+            "selector": {
+                "type": "string",
+                "description": "CSS selector or text matching element (for 'click', 'type', 'extract'). e.g. 'input[name=\"q\"]' or 'text=Search'."
+            },
+            "text": {
+                "type": "string",
+                "description": "Text to type into the input element (for 'type' action)."
+            },
+            "direction": {
+                "type": "string",
+                "enum": ["down", "up"],
+                "description": "Scroll direction (for 'scroll' action). Defaults to 'down'."
+            },
+            "path": {
+                "type": "string",
+                "description": "File path to save screenshot (for 'screenshot' action). Defaults to 'browser_shot.png'."
+            },
+            "headless": {
+                "type": "boolean",
+                "description": "Whether to run browser invisibly in background. Set to False to show real browser window to user. Defaults to False."
+            }
+        }
+
+    @property
+    def required_params(self):
+        return ["action"]
+
+    def is_read_only(self) -> bool:
+        return False
+
+    def needs_permissions(self, input_args: Dict[str, Any]) -> bool:
+        return False
+
+    async def call(self, action: str, url: str = "", selector: str = "", text: str = "", direction: str = "down", path: str = "browser_shot.png", headless: bool = False, **kwargs) -> str:
+        global _pw_instance, _browser_instance, _page_instance
+
+        try:
+            if action == "close":
+                if _browser_instance is not None:
+                    await _browser_instance.close()
+                    _browser_instance = None
+                    _page_instance = None
+                if _pw_instance is not None:
+                    await _pw_instance.stop()
+                    _pw_instance = None
+                return "Browser closed successfully."
+
+            page = await _get_page(headless=headless)
+
+            if action == "goto":
+                if not url:
+                    return "Error: URL is required for 'goto' action."
+                if not url.startswith("http://") and not url.startswith("https://"):
+                    url = "https://" + url
+                await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+                title = await page.title()
+                return f"Navigated to {url}. Page Title: '{title}'."
+
+            elif action == "click":
+                if not selector:
+                    return "Error: Selector is required for 'click' action."
+                await page.click(selector, timeout=10000)
+                return f"Clicked element matching '{selector}'."
+
+            elif action == "type":
+                if not selector or not text:
+                    return "Error: Selector and text are required for 'type' action."
+                await page.fill(selector, text, timeout=10000)
+                return f"Typed '{text}' into element '{selector}'."
+
+            elif action == "scroll":
+                pixels = 600 if direction == "down" else -600
+                await page.evaluate(f"window.scrollBy(0, {pixels})")
+                return f"Scrolled page {direction} by 600 pixels."
+
+            elif action == "extract":
+                if selector:
+                    element = await page.query_selector(selector)
+                    if element:
+                        content = await element.inner_text()
+                        return f"Extracted text from '{selector}':\n{content[:2000]}"
+                    return f"Element '{selector}' not found."
+                else:
+                    # Extract main visible body text
+                    content = await page.evaluate("document.body.innerText")
+                    return f"Extracted page content:\n{content[:3000]}..."
+
+            elif action == "screenshot":
+                abs_path = os.path.abspath(path)
+                await page.screenshot(path=abs_path, full_page=False)
+                return f"Screenshot saved to {abs_path}."
+
+            else:
+                return f"Error: Unknown action '{action}'."
+
+        except Exception as e:
+            return f"Browser Automation Error: {str(e)}"
