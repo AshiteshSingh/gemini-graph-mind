@@ -475,6 +475,7 @@ async def main():
                     "edit_notebook":   ("[NB-E]   ", "bold yellow", f"Notebook: {args.get('path', '')}"),
                     "architect":       ("[PLAN]   ", "bold blue",   f"Planning: {args.get('task', '')[:60]}"),
                     "browser_action":  ("[BROWSER]", "bold cyan",   f"{args.get('action', '').upper()}: {args.get('url', '') or args.get('selector', '') or args.get('direction', '')}"),
+                    "read_url_content":("[FETCH]  ", "bold green",  f"URL: {args.get('url', '')}"),
                 }
                 if func_name in markers:
                     marker, style, msg = markers[func_name]

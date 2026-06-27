@@ -17,6 +17,7 @@ prompt_toolkit
 # HTTP requests & Browser automation
 requests
 playwright
+beautifulsoup4
 
 # Async support
 asyncio

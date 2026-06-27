@@ -54,7 +54,8 @@ SYSTEM_INSTRUCTION = (
     "6. Use spawn_subagent for long background tasks.\n"
     "7. Analyze errors and try alternative approaches instead of giving up.\n"
     "8. Use architect to plan large features before implementing them.\n"
-    "9. Use browser_action to control a real web browser (open URL, click, type, scroll, screenshot like a human)."
+    "9. Use browser_action to control a real web browser (open URL, click, type, scroll, screenshot like a human).\n"
+    "10. Use read_url_content to quickly fetch and read full text from documentation or search result URLs."
 )
 
 
