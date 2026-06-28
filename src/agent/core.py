@@ -288,13 +288,15 @@ class OmniDevAgent:
             while "//" in model_name:
                 model_name = model_name.replace("//", "/")
             
-            # Fix Ollama model names - remove size from cloud variant
-            # Example: ollama/gemma4:31b-cloud -> ollama/gemma4-cloud
-            if model_name.startswith("ollama/") and "-cloud" in model_name.lower():
-                parts = model_name.split(":")
-                if len(parts) > 1:
-                    model_base = parts[0]
-                    model_name = model_base + "-cloud"
+            # Fix Ollama model names - only strip size tag for LOCAL ollama models
+            # Cloud variants like ollama/gemma4:31b-cloud keep their tag for the cloud API
+            # Local models like ollama/llama3:8b -> ollama/llama3 (litellm handles it)
+            if model_name.startswith("ollama/") and ":" in model_name:
+                model_lower_check = model_name.lower()
+                is_cloud_variant = any(k in model_lower_check for k in ["-cloud", ":cloud"])
+                if not is_cloud_variant:
+                    # Strip size tag for local models only
+                    model_name = model_name.split(":")[0]
 
             known_providers = ("groq/", "openai/", "anthropic/", "gemini/", "vertex_ai/", "openrouter/", "ollama/", "mistral/", "deepseek/", "huggingface/", "azure/", "cohere/")
             if not any(model_name.lower().startswith(p) for p in known_providers):
@@ -314,9 +316,18 @@ class OmniDevAgent:
 
         # Determine if this model has known limitations with tool schemas
         model_lower = model_name.lower()
-        disable_tools_for_model = any(k in model_lower for k in [
-            "ollama/", "gemma", "mistral", "neural-chat", "orca", "dolphin"
-        ])
+        # Cloud Ollama models (with "cloud" in name) are hosted APIs that CAN support tool schemas.
+        # Explicitly treat cloud ollama as a capable model regardless of model name keywords.
+        is_cloud_ollama = model_lower.startswith("ollama/") and any(
+            k in model_lower for k in ["cloud", "-cloud", ":cloud"]
+        )
+        is_local_ollama = model_lower.startswith("ollama/") and not is_cloud_ollama
+        # Disable tools for: local ollama, or known-limited open source models (unless it's cloud ollama)
+        disable_tools_for_model = not is_cloud_ollama and (
+            is_local_ollama or any(k in model_lower for k in [
+                "gemma", "mistral", "neural-chat", "orca", "dolphin"
+            ])
+        )
 
         completion_kwargs = {
             "model": model_name,
@@ -390,6 +401,12 @@ class OmniDevAgent:
                         text = response.choices[0].message.content or ""
                         # Clean the text before returning
                         text = _clean_final_text(text)
+                        if not text.strip():
+                            return (
+                                f"🚨 **Empty Response from `{model_name}`:** The model returned no content.\n\n"
+                                f"*Possible causes:* Model may not support this prompt format, or the cloud API timed out.\n"
+                                f"*Try:* Use `/model` to switch to a cloud provider like `groq/llama-3.3-70b-versatile` or `gemini/gemini-2.5-pro`."
+                            )
                         return (
                             f"⚠️ **Note:** `{model_name}` doesn't support tool use. Response generated without tool assistance.\n\n"
                             + text

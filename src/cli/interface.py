@@ -528,16 +528,13 @@ async def main():
                     while "//" in new_model:
                         new_model = new_model.replace("//", "/")
                     
-                    # Fix Ollama model names - remove size from cloud variant
-                    # Example: ollama/gemma4:31b-cloud -> ollama/gemma4-cloud
-                    if new_model.startswith("ollama/") and "-cloud" in new_model.lower():
-                        # Extract model name before size indicator
-                        parts = new_model.split(":")
-                        if len(parts) > 1:
-                            # Has size indicator like gemma4:31b-cloud
-                            model_base = parts[0]  # ollama/gemma4
-                            # Get the cloud suffix from the size part
-                            new_model = model_base + "-cloud"
+                    # Fix Ollama model names - only strip size tag for LOCAL ollama
+                    # Cloud variants like ollama/gemma4:31b-cloud keep their exact tag
+                    if new_model.startswith("ollama/") and ":" in new_model:
+                        model_lower_check = new_model.lower()
+                        is_cloud_variant = any(k in model_lower_check for k in ["-cloud", ":cloud"])
+                        if not is_cloud_variant:
+                            new_model = new_model.split(":")[0]
 
                     known_providers = ("groq/", "openai/", "anthropic/", "gemini/", "vertex_ai/", "openrouter/", "ollama/", "mistral/", "deepseek/", "huggingface/", "azure/", "cohere/")
                     if not any(new_model.lower().startswith(p) for p in known_providers):
@@ -579,8 +576,12 @@ async def main():
                     
                     # Warn if model doesn't support tool use
                     model_lower = new_model.lower()
-                    no_tool_support = any(k in model_lower for k in [
-                        "ollama/", "gemma", "mistral", "neural-chat", "orca", "dolphin"
+                    is_cloud_ollama_model = model_lower.startswith("ollama/") and any(
+                        k in model_lower for k in ["cloud", "-cloud", ":cloud"]
+                    )
+                    is_local_ollama_model = model_lower.startswith("ollama/") and not is_cloud_ollama_model
+                    no_tool_support = is_local_ollama_model or any(k in model_lower for k in [
+                        "gemma", "mistral", "neural-chat", "orca", "dolphin"
                     ])
                     
                     if no_tool_support:
@@ -859,7 +860,12 @@ async def main():
 
             # Render Response
             console.print()
-            render_smooth_markdown(final_response, accent_color="bold cyan", title="✨ Omni-Dev")
+            if not final_response or not final_response.strip():
+                console.print("[bold cyan]✨ Omni-Dev[/bold cyan]")
+                console.print("  [dim]└[/dim] [yellow]⚠️  The model returned an empty response.[/yellow]")
+                console.print(f"  [dim]└[/dim] [dim]Try: /model to switch providers, or check your API key with /doctor[/dim]")
+            else:
+                render_smooth_markdown(final_response, accent_color="bold cyan", title="✨ Omni-Dev")
             console.print()
 
         except KeyboardInterrupt:
