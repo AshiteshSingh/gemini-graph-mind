@@ -234,14 +234,64 @@ async def main():
 
     with console.status("[bold green]Initializing Omni-Dev and loading memories...", spinner="multi_squares", spinner_style="bold green"):
         try:
+            # ── Point Cognee to a PERSISTENT project-local data directory ──
+            # This prevents memories from being wiped when pip upgrades cognee.
+            import cognee as _cog
+            _data_root = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", ".cognee_data")
+            _data_root = os.path.normpath(_data_root)
+            os.makedirs(_data_root, exist_ok=True)
+            try:
+                _cog.config.set_data_root_directory(_data_root)
+            except Exception:
+                # Older API: set via env var
+                os.environ.setdefault("DATA_ROOT_DIRECTORY", _data_root)
+
             agent = OmniDevAgent()
             sync_cognee_config()
         except Exception as e:
             console.print(f"[bold red]Failed to initialize agent:[/bold red] {e}")
             return
 
+    # ── Load past session memories into agent context (AI Amnesia Fix) ──
+    startup_context = ""
+    try:
+        with suppress_output():
+            import cognee as _cog
+            past = []
+            try:
+                past = await _cog.recall(query_text="recent work sessions portfolio website projects tasks completed")
+            except Exception:
+                try:
+                    past = await _cog.search(query_text="recent work sessions portfolio website projects tasks completed")
+                except Exception:
+                    pass
+            if past:
+                parts = []
+                for r in past:
+                    text = None
+                    for attr in ("answer", "text", "content", "summary", "description", "fact"):
+                        text = getattr(r, attr, None)
+                        if text and isinstance(text, str) and text.strip():
+                            break
+                    if not text:
+                        text = str(r)
+                    if text and text.strip() not in parts:
+                        parts.append(text.strip())
+                if parts:
+                    startup_context = "\n\n<previous_session_memory>\n" + "\n\n".join(parts[:6]) + "\n</previous_session_memory>"
+    except Exception:
+        pass
+
+    if startup_context:
+        # Inject memories into the agent's system prompt
+        if agent.messages and agent.messages[0]["role"] == "system":
+            agent.messages[0]["content"] += startup_context
+
     console.clear()
     print_banner(agent)
+    if startup_context:
+        console.print("  [bold green]📚 Past session memories loaded into context.[/bold green]")
+
 
     # Setup interactive PromptSession with autocomplete & live status bar
     try:
@@ -672,15 +722,23 @@ async def main():
                 with console.status("  [dim]└[/dim] [bold magenta]Indexing codebase into Cognee Graph Memory...", spinner="multi_squares", spinner_style="bold magenta"):
                     import cognee
                     files_added = 0
+                    file_texts = []
                     for filepath in glob.glob(os.path.join(".", "**", "*.*"), recursive=True):
-                        if any(x in filepath for x in ["node_modules", ".git", "venv", "__pycache__"]):
+                        if any(x in filepath for x in ["node_modules", ".git", "venv", "__pycache__", ".env"]):
                             continue
                         try:
-                            await cognee.add(f"Codebase File: {filepath}", dataset_name="codebase_architecture")
+                            # Collect file info without hitting cognee per-file (too slow)
+                            file_texts.append(f"Codebase File: {filepath}")
                             files_added += 1
                         except Exception:
                             pass
-                    await cognee.cognify()
+                    if file_texts:
+                        combined = "\n".join(file_texts)
+                        try:
+                            await cognee.remember(combined, dataset_name="codebase_architecture")
+                        except Exception:
+                            await cognee.add(combined, dataset_name="codebase_architecture")
+                            await cognee.cognify()
                 console.print(f"  [dim]└[/dim] [bold green]{files_added} files indexed into Cognee Graph Memory.[/bold green]")
                 continue
 
@@ -695,12 +753,26 @@ async def main():
                 query = query.strip()
                 with console.status("  [dim]└[/dim] [bold magenta]Querying Cognee Knowledge Graph..."):
                     import cognee
-                    results = await cognee.search("SEARCH_TYPE_INSIGHTS", query_text=query)
-                if results:
+                    mem_results = []
+                    try:
+                        mem_results = await cognee.recall(query_text=query)
+                    except Exception:
+                        try:
+                            mem_results = await cognee.search(query_text=query)
+                        except Exception:
+                            pass
+                if mem_results:
                     table = Table(title="Cognee Knowledge Graph -- Long-Term Memories", border_style="magenta")
                     table.add_column("Memory / Insight", style="cyan")
-                    for res in results:
-                        table.add_row(str(res))
+                    for res in mem_results:
+                        text = None
+                        for attr in ("answer", "text", "content", "summary", "description", "fact"):
+                            text = getattr(res, attr, None)
+                            if text and isinstance(text, str) and text.strip():
+                                break
+                        if not text:
+                            text = str(res)
+                        table.add_row(text.strip()[:300])
                     console.print(table)
                 else:
                     console.print("  [dim]└[/dim] [italic red]No memories found in the Cognee graph.[/italic red]")
@@ -825,15 +897,32 @@ async def main():
                     console.print(f"  [dim]├─[/dim] [dim][TOOL] {func_name}[/dim]")
                 if status: status.start()
 
-            # AUTO-RAG: Deep Memory Retrieval before every message
+            # AUTO-RAG: Deep Memory Retrieval before every message (Cognee 1.2.2 API)
             import cognee
             past_context = ""
             try:
                 with suppress_output():
                     deep_query = f"User Request: {user_input} | Recent Agent Actions"
-                    retrieved = await cognee.search("SEARCH_TYPE_INSIGHTS", query_text=deep_query)
+                    # Use new recall() API (v1.2.2+)
+                    try:
+                        retrieved = await cognee.recall(query_text=deep_query)
+                    except Exception:
+                        retrieved = await cognee.search(query_text=deep_query)
                     if retrieved:
-                        past_context = "\n\n<deep_graph_context>\n" + "\n".join(str(r) for r in retrieved) + "\n</deep_graph_context>"
+                        parts = []
+                        for r in retrieved:
+                            # Extract human-readable text from result objects
+                            text = None
+                            for attr in ("answer", "text", "content", "summary", "description", "fact"):
+                                text = getattr(r, attr, None)
+                                if text and isinstance(text, str) and text.strip():
+                                    break
+                            if not text:
+                                text = str(r)
+                            if text and text.strip() and text.strip() not in parts:
+                                parts.append(text.strip())
+                        if parts:
+                            past_context = "\n\n<deep_graph_context>\n" + "\n".join(parts[:8]) + "\n</deep_graph_context>"
             except Exception:
                 pass
 
@@ -849,12 +938,17 @@ async def main():
                 if status:
                     status.stop()
 
-            # AUTO-JOURNALING: Store to Cognee Memory
+            # AUTO-JOURNALING: Store to Cognee Memory (Cognee 1.2.2 API)
             try:
                 with suppress_output():
-                    journal_entry = f"User Request: {user_input}\nOmni-Dev Response: {final_response}"
-                    await cognee.add(journal_entry, dataset_name="user_memory")
-                    await cognee.cognify()
+                    journal_entry = f"User Request: {user_input}\nOmni-Dev Response: {final_response[:800]}"
+                    # Use new remember() API (v1.2.2+)
+                    try:
+                        await cognee.remember(journal_entry, dataset_name="user_memory")
+                    except Exception:
+                        # Fallback to old V1 API
+                        await cognee.add(journal_entry, dataset_name="user_memory")
+                        await cognee.cognify()
             except Exception:
                 pass
 

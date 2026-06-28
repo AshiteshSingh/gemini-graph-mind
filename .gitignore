@@ -4,3 +4,5 @@ node_modules/
 __pycache__/
 dist/
 build/
+.cognee_data/
+*.cognee_db

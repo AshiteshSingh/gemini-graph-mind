@@ -45,6 +45,13 @@ SYSTEM_INSTRUCTION = (
     "You can read/write files, run commands, search the codebase, manage memory, spawn sub-agents, "
     "browse the web, think through complex problems, list directories, find files with glob patterns, "
     "read/edit Jupyter notebooks, and generate architectural plans.\n\n"
+    "MEMORY RULES (CRITICAL — follow these to prevent AI amnesia):\n"
+    "0. At the START of every new conversation or when context is unclear, call 'recall' with a broad "
+    "   query like 'recent work sessions user projects portfolio' to load past context BEFORE doing anything.\n"
+    "1. After completing any significant task (building a website, writing code, finishing a feature), "
+    "   ALWAYS call 'remember' to store a concise summary: what was built, where the files are, what the user wanted.\n"
+    "2. When the user says 'I told you before' or 'you forgot', immediately call 'recall' to retrieve it.\n"
+    "3. ALWAYS use 'remember' after: creating files, building projects, learning user preferences, completing research.\n\n"
     "ENVIRONMENT: Windows 11 — PowerShell shell. NEVER use Unix shell syntax:\n"
     "  ❌ WRONG (Linux/Mac): python server.py &   sleep 2 && curl   nohup python app.py\n"
     "  ✅ CORRECT (Windows): python server.py  (with a short timeout)  or  start python server.py\n"
@@ -65,6 +72,7 @@ SYSTEM_INSTRUCTION = (
     "11. Use ask_user whenever you need user clarification or feedback mid-task. Do NOT stop your turn to ask a question; call ask_user instead.\n"
     "12. NEVER run long-running blocking commands without a short timeout. Server start commands must use timeout=5 or less."
 )
+
 
 
 def _clean_final_text(text: str) -> str:

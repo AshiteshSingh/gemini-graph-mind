@@ -1,21 +1,40 @@
 """
-MemoryTools - Python port of scratch_repo MemoryReadTool and MemoryWriteTool.
+memory_tools.py - Fixed for Cognee 1.2.2 API
 
-IMPORTANT: These tools use Cognee as the memory backend.
-The Cognee integration (cognee.add, cognee.cognify, cognee.search) is
-PRESERVED exactly as in the original agent/core.py.
+Cognee 1.2.2 changed the API:
+  OLD (broken): cognee.search("SEARCH_TYPE_INSIGHTS", query_text=q)
+  NEW (correct): cognee.recall(query_text=q)  or  cognee.search(query_text=q)
+
+  OLD (works but slow): cognee.add(text) + cognee.cognify()
+  NEW (preferred):      cognee.remember(text, dataset_name=...)
 """
+import asyncio
 from typing import Any, Dict
 
 import cognee
 from .base_tool import BaseTool
 
 
+def _extract_recall_text(result) -> str:
+    """Extract human-readable text from a cognee recall/search result object."""
+    # Try common attribute names
+    for attr in ("answer", "text", "content", "summary", "description", "fact", "node_name"):
+        val = getattr(result, attr, None)
+        if val and isinstance(val, str) and val.strip():
+            return val.strip()
+    # Dict-like
+    if hasattr(result, "__dict__"):
+        d = result.__dict__
+        for k in ("answer", "text", "content", "summary", "description", "fact", "node_name"):
+            if k in d and d[k]:
+                return str(d[k]).strip()
+    return str(result)
+
+
 class MemoryWriteTool(BaseTool):
     """
     Store a fact or context into long-term Cognee graph memory.
-    Python port of scratch_repo MemoryWriteTool.
-    Cognee memory integration is preserved exactly.
+    Uses the new Cognee 1.2.2 remember() API.
     """
 
     @property
@@ -46,21 +65,27 @@ class MemoryWriteTool(BaseTool):
         return False
 
     async def call(self, fact: str) -> str:
-        """Store the fact in Cognee memory."""
+        """Store the fact in Cognee memory using the new remember() API."""
+        if not fact or not fact.strip():
+            return "Error: fact parameter is required."
         try:
-            # PRESERVED: Original Cognee memory write pattern
-            await cognee.add(fact, dataset_name="user_memory")
-            await cognee.cognify()
+            # Try new cognee.remember() API (v1.2.2+)
+            await asyncio.to_thread(cognee.remember, fact, dataset_name="user_memory")
             return "✅ Fact successfully saved to long-term Cognee graph memory."
-        except Exception as e:
-            return f"Error saving to memory: {e}"
+        except Exception as e1:
+            try:
+                # Fallback: old V1 API (add + cognify)
+                await cognee.add(fact, dataset_name="user_memory")
+                await cognee.cognify()
+                return "✅ Fact saved to Cognee memory (via V1 API)."
+            except Exception as e2:
+                return f"Error saving to memory: {e2}"
 
 
 class MemoryReadTool(BaseTool):
     """
     Search long-term Cognee graph memory for past context.
-    Python port of scratch_repo MemoryReadTool.
-    Cognee memory integration is preserved exactly.
+    Uses the new Cognee 1.2.2 recall() API.
     """
 
     @property
@@ -71,6 +96,7 @@ class MemoryReadTool(BaseTool):
     def description(self) -> str:
         return (
             "Search long-term Cognee graph memory for past context, facts, or user preferences. "
+            "Use this at the START of every session to load past work context. "
             "Use this to retrieve information stored in previous sessions or by sub-agents. "
             "Returns insights from the knowledge graph."
         )
@@ -91,12 +117,33 @@ class MemoryReadTool(BaseTool):
         return False
 
     async def call(self, query: str) -> str:
-        """Search Cognee memory for relevant information."""
+        """Search Cognee memory using the new recall() API."""
+        if not query or not query.strip():
+            return "Error: query parameter is required."
         try:
-            # PRESERVED: Original Cognee memory search pattern
-            results = await cognee.search("SEARCH_TYPE_INSIGHTS", query_text=query)
+            # Try new cognee.recall() API (v1.2.2+) - preferred
+            results = await cognee.recall(query_text=query)
             if results:
-                return "\n".join(str(res) for res in results)
+                parts = []
+                for res in results:
+                    text = _extract_recall_text(res)
+                    if text and text not in parts:
+                        parts.append(text)
+                if parts:
+                    return "📚 **Memory Retrieved:**\n" + "\n\n".join(parts[:10])
             return "No relevant memories found in the Cognee knowledge graph."
-        except Exception as e:
-            return f"Error recalling from memory: {e}"
+        except Exception as e1:
+            try:
+                # Fallback: new-style search() with correct signature
+                results = await cognee.search(query_text=query)
+                if results:
+                    parts = []
+                    for res in results:
+                        text = _extract_recall_text(res)
+                        if text and text not in parts:
+                            parts.append(text)
+                    if parts:
+                        return "📚 **Memory Retrieved:**\n" + "\n\n".join(parts[:10])
+                return "No relevant memories found in the Cognee knowledge graph."
+            except Exception as e2:
+                return f"Error recalling from memory: {e2}"

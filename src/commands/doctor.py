@@ -78,9 +78,15 @@ async def doctor_command() -> str:
     
     # Check model capabilities
     model_lower = model.lower()
-    no_tool_support = any(k in model_lower for k in [
-        "ollama/", "gemma", "mistral", "neural-chat", "orca", "dolphin"
-    ])
+    is_cloud_ollama = model_lower.startswith("ollama/") and any(
+        k in model_lower for k in ["cloud", "-cloud", ":cloud"]
+    )
+    is_local_ollama = model_lower.startswith("ollama/") and not is_cloud_ollama
+    no_tool_support = not is_cloud_ollama and (
+        is_local_ollama or any(k in model_lower for k in [
+            "gemma", "mistral", "neural-chat", "orca", "dolphin"
+        ])
+    )
     if no_tool_support:
         lines.append("  ⚠️  This model has limited tool support (file/command execution limited)")
     else:
@@ -162,6 +168,29 @@ async def doctor_command() -> str:
             break
     else:
         lines.append("  💡 No AGENTS.md found. Run /init to create one.")
+
+    # --- Cognee Memory Health ---
+    lines.append("\n### 🧠 Cognee Memory Health")
+    try:
+        import cognee as cg
+        import os as _os
+        cg_file = cg.__file__
+        db_path = _os.path.join(_os.path.dirname(cg_file), '.cognee_system', 'databases')
+        if _os.path.exists(db_path):
+            db_file = _os.path.join(db_path, 'cognee_db')
+            if _os.path.exists(db_file):
+                size_kb = _os.path.getsize(db_file) // 1024
+                lines.append(f"  ✅ Cognee DB found: {db_file}")
+                lines.append(f"  📦 DB size: {size_kb} KB {'(has stored memories)' if size_kb > 10 else '(empty — no memories yet)'}")
+            else:
+                lines.append(f"  ⚠️  Cognee DB directory exists but no database file yet")
+                lines.append(f"  💡 Talk to Omni-Dev and memories will be stored automatically")
+        else:
+            lines.append("  ⚠️  Cognee DB directory not found — memories not yet initialized")
+        lines.append(f"  📁 DB location: {db_path}")
+        lines.append("  ℹ️  API version: Cognee 1.2.2 (recall/remember API)")
+    except Exception as e:
+        lines.append(f"  ❌ Cognee memory check failed: {e}")
 
     lines.append("\n---\n✅ Doctor complete. Fix any ❌/⚠️ items above for best performance.")
     return "\n".join(lines)
