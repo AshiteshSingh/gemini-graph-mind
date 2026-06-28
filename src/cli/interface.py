@@ -253,37 +253,23 @@ async def main():
             return
 
     # ── Load past session memories into agent context (AI Amnesia Fix) ──
+    # Use SimpleMemory (JSON file) — instant, no cloud API calls needed
+    from src.simple_memory import recall as sm_recall, recall_recent, get_memory_summary
     startup_context = ""
     try:
-        with suppress_output():
-            import cognee as _cog
-            past = []
-            try:
-                past = await _cog.recall(query_text="recent work sessions portfolio website projects tasks completed")
-            except Exception:
-                try:
-                    past = await _cog.search(query_text="recent work sessions portfolio website projects tasks completed")
-                except Exception:
-                    pass
-            if past:
-                parts = []
-                for r in past:
-                    text = None
-                    for attr in ("answer", "text", "content", "summary", "description", "fact"):
-                        text = getattr(r, attr, None)
-                        if text and isinstance(text, str) and text.strip():
-                            break
-                    if not text:
-                        text = str(r)
-                    if text and text.strip() not in parts:
-                        parts.append(text.strip())
-                if parts:
-                    startup_context = "\n\n<previous_session_memory>\n" + "\n\n".join(parts[:6]) + "\n</previous_session_memory>"
+        # Load recent + relevant memories
+        recent = recall_recent(3)
+        relevant = sm_recall("portfolio website hangover ai projects built", top_k=5)
+        all_parts = []
+        for t in recent + relevant:
+            if t and t.strip() and t.strip() not in all_parts:
+                all_parts.append(t.strip())
+        if all_parts:
+            startup_context = "\n\n<previous_session_memory>\n" + "\n\n".join(all_parts[:6]) + "\n</previous_session_memory>"
     except Exception:
         pass
 
     if startup_context:
-        # Inject memories into the agent's system prompt
         if agent.messages and agent.messages[0]["role"] == "system":
             agent.messages[0]["content"] += startup_context
 
@@ -746,37 +732,29 @@ async def main():
             if cmd_lower == "/memory":
                 console.print(f"\n[bold cyan]{cmd}[/bold cyan]")
                 if use_prompt_toolkit:
-                    query = await asyncio.get_event_loop().run_in_executor(None, lambda: session.prompt("What memory to recall? "))
+                    query = await asyncio.get_event_loop().run_in_executor(None, lambda: session.prompt("What memory to recall? (or Enter for recent) "))
                 else:
                     from rich.prompt import Prompt as RPrompt
-                    query = RPrompt.ask("What memory to recall?")
+                    query = RPrompt.ask("What memory to recall? (or Enter for recent)")
                 query = query.strip()
-                with console.status("  [dim]└[/dim] [bold magenta]Querying Cognee Knowledge Graph..."):
-                    import cognee
-                    mem_results = []
-                    try:
-                        mem_results = await cognee.recall(query_text=query)
-                    except Exception:
-                        try:
-                            mem_results = await cognee.search(query_text=query)
-                        except Exception:
-                            pass
-                if mem_results:
-                    table = Table(title="Cognee Knowledge Graph -- Long-Term Memories", border_style="magenta")
+                from src.simple_memory import recall as sm_recall, recall_recent, get_memory_summary
+                with console.status("  [dim]└[/dim] [bold magenta]Searching memory store..."):
+                    if query:
+                        sm_results = sm_recall(query, top_k=10)
+                    else:
+                        sm_results = recall_recent(10)
+                if sm_results:
+                    table = Table(title="Long-Term Memories (SimpleMemory Store)", border_style="magenta")
+                    table.add_column("#", style="dim", width=4)
                     table.add_column("Memory / Insight", style="cyan")
-                    for res in mem_results:
-                        text = None
-                        for attr in ("answer", "text", "content", "summary", "description", "fact"):
-                            text = getattr(res, attr, None)
-                            if text and isinstance(text, str) and text.strip():
-                                break
-                        if not text:
-                            text = str(res)
-                        table.add_row(text.strip()[:300])
+                    for i, text in enumerate(sm_results, 1):
+                        table.add_row(str(i), text[:300])
                     console.print(table)
+                    console.print(f"  [dim]└[/dim] [dim]{get_memory_summary()}[/dim]")
                 else:
-                    console.print("  [dim]└[/dim] [italic red]No memories found in the Cognee graph.[/italic red]")
+                    console.print("  [dim]└[/dim] [italic yellow]No memories found yet. The agent stores memories automatically after each session.[/italic yellow]")
                 continue
+
 
             # /history
             if cmd_lower == "/history":
@@ -897,32 +875,13 @@ async def main():
                     console.print(f"  [dim]├─[/dim] [dim][TOOL] {func_name}[/dim]")
                 if status: status.start()
 
-            # AUTO-RAG: Deep Memory Retrieval before every message (Cognee 1.2.2 API)
-            import cognee
+            # AUTO-RAG: Deep Memory Retrieval using SimpleMemory (instant, no cloud API)
+            from src.simple_memory import recall as sm_recall
             past_context = ""
             try:
-                with suppress_output():
-                    deep_query = f"User Request: {user_input} | Recent Agent Actions"
-                    # Use new recall() API (v1.2.2+)
-                    try:
-                        retrieved = await cognee.recall(query_text=deep_query)
-                    except Exception:
-                        retrieved = await cognee.search(query_text=deep_query)
-                    if retrieved:
-                        parts = []
-                        for r in retrieved:
-                            # Extract human-readable text from result objects
-                            text = None
-                            for attr in ("answer", "text", "content", "summary", "description", "fact"):
-                                text = getattr(r, attr, None)
-                                if text and isinstance(text, str) and text.strip():
-                                    break
-                            if not text:
-                                text = str(r)
-                            if text and text.strip() and text.strip() not in parts:
-                                parts.append(text.strip())
-                        if parts:
-                            past_context = "\n\n<deep_graph_context>\n" + "\n".join(parts[:8]) + "\n</deep_graph_context>"
+                sm_parts = sm_recall(user_input, top_k=5)
+                if sm_parts:
+                    past_context = "\n\n<memory_context>\n" + "\n\n".join(sm_parts[:5]) + "\n</memory_context>"
             except Exception:
                 pass
 
@@ -938,19 +897,25 @@ async def main():
                 if status:
                     status.stop()
 
-            # AUTO-JOURNALING: Store to Cognee Memory (Cognee 1.2.2 API)
+            # AUTO-JOURNALING: Store to SimpleMemory (instant) + Cognee (background, best-effort)
+            from src.simple_memory import remember as sm_remember
             try:
-                with suppress_output():
-                    journal_entry = f"User Request: {user_input}\nOmni-Dev Response: {final_response[:800]}"
-                    # Use new remember() API (v1.2.2+)
-                    try:
-                        await cognee.remember(journal_entry, dataset_name="user_memory")
-                    except Exception:
-                        # Fallback to old V1 API
-                        await cognee.add(journal_entry, dataset_name="user_memory")
-                        await cognee.cognify()
+                journal_entry = f"[{__import__('time').strftime('%Y-%m-%d')}] User: {user_input[:200]}\nOmni-Dev: {final_response[:400]}"
+                sm_remember(journal_entry)
             except Exception:
                 pass
+            # Also try Cognee in the background (non-blocking)
+            async def _bg_cognee_journal():
+                try:
+                    import cognee
+                    j = f"User Request: {user_input}\nOmni-Dev Response: {final_response[:600]}"
+                    try:
+                        await cognee.remember(j, dataset_name="user_memory")
+                    except Exception:
+                        pass
+                except Exception:
+                    pass
+            asyncio.ensure_future(_bg_cognee_journal())
 
             # Render Response
             console.print()
