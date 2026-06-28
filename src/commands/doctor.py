@@ -61,6 +61,10 @@ async def doctor_command() -> str:
         ("GEMINI_API_KEY", "Google Gemini"),
         ("GOOGLE_APPLICATION_CREDENTIALS", "Google Cloud / Vertex AI"),
         ("AWS_ACCESS_KEY_ID", "AWS Bedrock"),
+        ("MISTRAL_API_KEY", "Mistral AI"),
+        ("OPENROUTER_API_KEY", "OpenRouter"),
+        ("OLLAMA_API_KEY", "Ollama Cloud API"),
+        ("OLLAMA_API_BASE", "Ollama API Base URL"),
         ("SEARXNG_URL", "SearXNG Web Search"),
     ]
     for env_name, display in api_keys:
@@ -71,6 +75,41 @@ async def doctor_command() -> str:
     # --- Current Model ---
     model = os.environ.get("OMNI_MODEL", "vertex_ai/gemini-1.5-pro (default)")
     lines.append(f"\n### 🤖 Active Model\n  🧠 {model}")
+    
+    # Check model capabilities
+    model_lower = model.lower()
+    no_tool_support = any(k in model_lower for k in [
+        "ollama/", "gemma", "mistral", "neural-chat", "orca", "dolphin"
+    ])
+    if no_tool_support:
+        lines.append("  ⚠️  This model has limited tool support (file/command execution limited)")
+    else:
+        lines.append("  ✅ This model supports full tool use")
+    
+    # Check Ollama if applicable
+    if "ollama/" in model_lower:
+        lines.append("\n### 🦙 Ollama Configuration")
+        api_base = os.environ.get("OLLAMA_API_BASE", "http://localhost:11434")
+        api_key = os.environ.get("OLLAMA_API_KEY", "")
+        lines.append(f"  API Base: {api_base}")
+        if "ollama.com" in api_base.lower():
+            lines.append(f"  Mode: Cloud")
+            if api_key:
+                lines.append(f"  API Key: {'✅ Set' if api_key else '❌ Not set'}")
+            else:
+                lines.append(f"  API Key: ❌ Not set (required for cloud)")
+        else:
+            lines.append(f"  Mode: Local")
+            # Try to connect to local Ollama
+            try:
+                import requests
+                resp = requests.get("http://localhost:11434/api/tags", timeout=2)
+                if resp.status_code == 200:
+                    lines.append(f"  ✅ Local Ollama server is running")
+                else:
+                    lines.append(f"  ❌ Local Ollama server not responding")
+            except Exception:
+                lines.append(f"  ❌ Local Ollama server offline. Run: ollama serve")
 
     # --- System Tools ---
     lines.append("\n### 🛠️ System Tools")

@@ -304,13 +304,23 @@ class OmniDevAgent:
                 elif any(k in lower_m for k in ["glm", "qwen", "deepseek", "phi", "yi"]):
                     model_name = "openrouter/" + model_name
 
+        # Determine if this model has known limitations with tool schemas
+        model_lower = model_name.lower()
+        disable_tools_for_model = any(k in model_lower for k in [
+            "ollama/", "gemma", "mistral", "neural-chat", "orca", "dolphin"
+        ])
+
         completion_kwargs = {
             "model": model_name,
             "messages": self.messages,
-            "tools": self._tool_schemas,
-            "tool_choice": "auto",
             "timeout": 120,
         }
+        
+        # Only add tools if model is known to support them
+        if not disable_tools_for_model:
+            completion_kwargs["tools"] = self._tool_schemas
+            completion_kwargs["tool_choice"] = "auto"
+        
         if model_name.startswith("ollama/"):
             api_base = os.environ.get("OLLAMA_API_BASE")
             model_lower = model_name.lower()
@@ -350,10 +360,14 @@ class OmniDevAgent:
                     response = litellm.completion(**completion_kwargs)
                 except (litellm.exceptions.BadRequestError, Exception) as e:
                     # Fallback: try without tools (some models or API wrappers reject tool schemas or return 400 with them)
-                    is_tool_or_400 = isinstance(e, litellm.exceptions.BadRequestError) or any(
-                        k in str(e).lower() for k in ["400", "bad request", "tool", "ollamaexception"]
+                    has_tools_in_kwargs = "tools" in completion_kwargs
+                    is_tool_or_400 = (
+                        isinstance(e, litellm.exceptions.BadRequestError) or 
+                        any(k in str(e).lower() for k in ["400", "bad request", "tool", "ollamaexception"])
                     )
-                    if is_tool_or_400:
+                    
+                    # Only fallback if we originally had tools and got an error
+                    if has_tools_in_kwargs and is_tool_or_400:
                         fallback_kwargs = dict(completion_kwargs)
                         fallback_kwargs.pop("tools", None)
                         fallback_kwargs.pop("tool_choice", None)
@@ -362,9 +376,10 @@ class OmniDevAgent:
                         except Exception:
                             raise e
                         text = response.choices[0].message.content or ""
+                        # Clean the text before returning
+                        text = _clean_final_text(text)
                         return (
-                            f"*(Warning: `{model_name}` rejected the tool schema or returned a bad request with tools. "
-                            "Tools disabled. Switch to gpt-4o or gemini-1.5-pro for full capabilities.)*\n\n"
+                            f"⚠️ **Note:** `{model_name}` doesn't support tool use. Response generated without tool assistance.\n\n"
                             + text
                         )
                     else:
@@ -378,6 +393,9 @@ class OmniDevAgent:
                     return f"🚨 **API Permission Error:** `{model_name}` access denied.\n\n*Raw Error:* {error_msg}"
                 if any(k in error_msg.lower() for k in ["auth", "key", "401", "invalid_api_key"]):
                     return f"🚨 **API Key Missing/Invalid for `{model_name}`.**\nUse `/api_key` to set it.\n\n*Raw Error:* {error_msg}"
+                # Generic error with suggestion to try without tools
+                if "tool" in error_msg.lower() or "function" in error_msg.lower():
+                    return f"🚨 **Tool Schema Error:** Model `{model_name}` encountered an issue with tool definitions.\n\nThis model may not support function calling. Try using a different model with `/model` command.\n\n*Raw Error:* {error_msg}"
                 return f"🚨 **LLM Error:** {error_msg}\n\n*Hint:* Use `/model` to switch providers."
 
             # Track cost

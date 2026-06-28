@@ -565,7 +565,18 @@ async def main():
                                     pass
 
                     sync_cognee_config()
-                    console.print(f"  [dim]└[/dim] [bold green]Model switched to:[/bold green] {new_model}")
+                    
+                    # Warn if model doesn't support tool use
+                    model_lower = new_model.lower()
+                    no_tool_support = any(k in model_lower for k in [
+                        "ollama/", "gemma", "mistral", "neural-chat", "orca", "dolphin"
+                    ])
+                    
+                    if no_tool_support:
+                        console.print(f"  [dim]└[/dim] [bold green]Model switched to:[/bold green] {new_model}")
+                        console.print(f"  [dim]└[/dim] [yellow]⚠️  Note:[/yellow] This model doesn't support tool use. Responses will be generated without file/command execution.")
+                    else:
+                        console.print(f"  [dim]└[/dim] [bold green]Model switched to:[/bold green] {new_model}")
                 continue
 
             # /api_key
