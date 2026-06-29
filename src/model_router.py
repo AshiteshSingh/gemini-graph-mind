@@ -321,6 +321,15 @@ def get_completion_fn() -> CompletionFn:
         return _COMPLETION_FN
     import litellm  # lazy import; heavy and only needed for real requests
 
+    # Apply quiet-mode flags here (the single place litellm is first imported on
+    # the request path) so CLI startup never pays the litellm import cost.
+    try:
+        litellm.suppress_debug_info = True
+        litellm.set_verbose = False
+        litellm.drop_params = True
+    except Exception:
+        pass
+
     return litellm.completion
 
 

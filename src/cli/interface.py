@@ -55,13 +55,9 @@ for _logger in ["cognee", "OntologyAdapter", "litellm", "httpx", "alembic", "ale
     logging.getLogger(_logger).setLevel(logging.CRITICAL)
 logging.root.setLevel(logging.CRITICAL)
 os.environ["COGNEE_SKIP_CONNECTION_TEST"] = "true"
-try:
-    import litellm
-    litellm.suppress_debug_info = True   # no "Give Feedback / debug this error" banners
-    litellm.set_verbose = False
-    litellm.drop_params = True
-except Exception:
-    pass
+# NOTE: litellm is intentionally NOT imported here — importing it is slow (several
+# seconds) and would block CLI startup. Its quiet-mode flags are applied lazily in
+# model_router.get_completion_fn() the first time a model call is actually made.
 try:
     import loguru
     loguru.logger.remove()
@@ -661,9 +657,9 @@ async def main():
 
     with console.status("[status.ok]Initializing Omni-Dev and loading memories...", spinner="omni_pulse"):
         try:
-            # Pin Cognee storage into the project (durable, reinstall-proof).
+            # Pin Cognee storage roots into the project (cheap, no heavy import).
             try:
-                cognee_paths.configure_cognee_storage()
+                cognee_paths.prime_storage_env()
             except Exception:
                 pass
 
@@ -692,21 +688,36 @@ async def main():
     except Exception:
         pass
 
-    # ── Best-effort Cognee startup recall (durable cross-session graph memory) ──
-    # Short, no-cognify search folded into startup_context. Wrapped in a strict
-    # timeout so a slow or failed Cognee never blocks startup.
-    cognee_parts = []
-    try:
-        async def _cognee_startup_recall():
+    # ── Durable Cognee graph recall — runs in the BACKGROUND ──────────────────
+    # The graph recall is an LLM call over the knowledge graph and can take
+    # seconds (cold start). Running it inline used to stall startup behind a 15s
+    # timeout. Instead we show the prompt immediately and fold graph memory into
+    # the system prompt when it arrives; the agent also calls `recall` itself when
+    # a turn needs it, so nothing is lost by deferring.
+    if startup_context:
+        if agent.messages and agent.messages[0]["role"] == "system":
+            agent.messages[0]["content"] += startup_context
+
+    console.clear()
+    print_banner()
+    if startup_context:
+        console.print("  [status.ok]Past session memories loaded into context.[/status.ok]")
+
+    async def _bg_startup_recall():
+        try:
             import cognee
-            collected = []
             try:
-                res = await cognee.recall(
+                cognee_paths.configure_cognee_storage()
+            except Exception:
+                pass
+            res = await asyncio.wait_for(
+                cognee.recall(
                     query_text="project context user preferences past work summary",
                     top_k=5,
-                )
-            except Exception:
-                res = []
+                ),
+                timeout=30,
+            )
+            parts = []
             for r in (res or []):
                 text = None
                 for attr in ("answer", "text", "content", "context", "summary",
@@ -717,26 +728,21 @@ async def main():
                         break
                 if not text:
                     text = str(r)
-                if text and text.strip() and text.strip() not in collected:
-                    collected.append(text.strip())
-            return collected
+                if text and text.strip() and text.strip() not in parts:
+                    parts.append(text.strip())
+            if parts and agent.messages and agent.messages[0]["role"] == "system":
+                agent.messages[0]["content"] += (
+                    "\n\n<cognee_graph_memory>\n"
+                    + "\n\n".join(parts[:5])
+                    + "\n</cognee_graph_memory>"
+                )
+        except Exception:
+            pass
 
-        cognee_parts = await asyncio.wait_for(_cognee_startup_recall(), timeout=15)
+    try:
+        asyncio.ensure_future(_bg_startup_recall())
     except Exception:
-        cognee_parts = []
-
-    if cognee_parts:
-        block = "\n\n<cognee_graph_memory>\n" + "\n\n".join(cognee_parts[:5]) + "\n</cognee_graph_memory>"
-        startup_context += block
-
-    if startup_context:
-        if agent.messages and agent.messages[0]["role"] == "system":
-            agent.messages[0]["content"] += startup_context
-
-    console.clear()
-    print_banner()
-    if startup_context:
-        console.print("  [status.ok]Past session memories loaded into context.[/status.ok]")
+        pass
 
     # ── First-run trust / onboarding gate (Req 16.7) ──
     try:

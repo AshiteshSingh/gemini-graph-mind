@@ -8,8 +8,6 @@ a summary, then clears the chat (preserving Cognee long-term memory).
 import os
 from typing import List, Dict, Any
 
-import litellm
-
 
 async def compact_command(messages: List[Dict[str, Any]], model: str) -> tuple[str, List[Dict[str, Any]]]:
     """
@@ -40,6 +38,7 @@ async def compact_command(messages: List[Dict[str, Any]], model: str) -> tuple[s
             {"role": "user", "content": summary_prompt},
         ]
 
+        import litellm
         response = litellm.completion(
             model=model,
             messages=summary_messages,

@@ -50,23 +50,20 @@ COGNEE_SYSTEM_DIR = os.path.join(COGNEE_DATA_DIR, "system")
 _CONFIGURED = False
 
 
-def configure_cognee_storage() -> str:
-    """Point Cognee's DATA + SYSTEM roots into the project ``.cognee_data`` dir.
+def prime_storage_env() -> str:
+    """Set storage env vars + create dirs WITHOUT importing cognee.
 
-    Idempotent and fully defensive. Returns the system root directory path that
-    was configured (so callers/tests can assert on it).
+    The cheap, import-free part of :func:`configure_cognee_storage`. Startup uses
+    this to pin the durable storage roots (cognee picks them up whenever it is
+    first imported later) without paying the multi-second ``import cognee`` cost
+    up front. Returns the system root path. Never raises.
     """
-    global _CONFIGURED
-
     try:
         os.makedirs(COGNEE_DATA_DIR, exist_ok=True)
         os.makedirs(COGNEE_SYSTEM_DIR, exist_ok=True)
     except Exception:
         pass
 
-    # Belt-and-braces: set the env vars Cognee reads before it builds its config.
-    # These are read by cognee's base/relational config when the package is first
-    # imported, so setting them is helpful when this module is imported very early.
     for env_key in ("DATA_ROOT_DIRECTORY", "COGNEE_DATA_ROOT_DIRECTORY"):
         try:
             os.environ.setdefault(env_key, COGNEE_DATA_DIR)
@@ -77,6 +74,20 @@ def configure_cognee_storage() -> str:
             os.environ.setdefault(env_key, COGNEE_SYSTEM_DIR)
         except Exception:
             pass
+    return COGNEE_SYSTEM_DIR
+
+
+def configure_cognee_storage() -> str:
+    """Point Cognee's DATA + SYSTEM roots into the project ``.cognee_data`` dir.
+
+    Idempotent and fully defensive. Returns the system root directory path that
+    was configured (so callers/tests can assert on it). Imports cognee (heavy) —
+    call lazily; startup should use :func:`prime_storage_env` instead.
+    """
+    global _CONFIGURED
+
+    # Cheap part first (env vars + dirs), no import.
+    prime_storage_env()
 
     try:
         import cognee
@@ -194,8 +205,11 @@ try:
 except Exception:
     pass
 
-# Configure storage location (imports cognee) AFTER the LLM env is set.
+# Configure storage location AFTER the LLM env is set. Use the cheap, import-free
+# primer at module load so importing this module does NOT drag in the heavy
+# ``cognee`` package; the full config (which imports cognee) runs lazily on the
+# first memory operation via configure_cognee_storage().
 try:
-    configure_cognee_storage()
+    prime_storage_env()
 except Exception:
     pass

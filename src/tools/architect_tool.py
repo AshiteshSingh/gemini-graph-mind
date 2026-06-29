@@ -7,7 +7,6 @@ It uses a separate LLM call to generate an implementation plan before execution.
 import os
 from typing import Any, Dict
 
-import litellm
 from .base_tool import BaseTool
 
 
@@ -74,6 +73,7 @@ class ArchitectTool(BaseTool):
             user_content += f"\n\nContext:\n{context}"
 
         try:
+            import litellm
             response = litellm.completion(
                 model=model,
                 messages=[
