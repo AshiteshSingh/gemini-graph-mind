@@ -13,7 +13,6 @@ import asyncio
 import warnings
 from dotenv import load_dotenv
 
-# Suppress warnings
 warnings.filterwarnings("ignore", category=UserWarning)
 
 # Add project root to path so imports work correctly
@@ -31,7 +30,6 @@ try:
 except Exception:
     pass
 
-# Load environment variables
 load_dotenv()
 
 

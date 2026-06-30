@@ -33,7 +33,6 @@ import inspect
 import time
 import warnings
 
-# Suppress verbose logs
 warnings.filterwarnings("ignore", category=UserWarning)
 
 from src.tools import get_json_schemas, get_all_tools

@@ -224,7 +224,6 @@ class CostTracker:
         return self.total_input_tokens + self.total_output_tokens
 
 
-# Global singleton
 _tracker = CostTracker()
 
 

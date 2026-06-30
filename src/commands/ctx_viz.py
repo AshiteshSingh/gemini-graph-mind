@@ -31,7 +31,7 @@ async def ctx_viz_command(messages: List[Dict[str, Any]], context: Dict[str, str
     lines.append(f"  Total characters: {total_chars:,}\n")
 
     # Per-message breakdown
-    for i, msg in enumerate(messages[:20]):  # Show first 20
+    for i, msg in enumerate(messages[:20]):
         role = msg.get("role", "unknown").upper()
         content = msg.get("content", "")
         if isinstance(content, list):
