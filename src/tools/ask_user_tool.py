@@ -25,6 +25,8 @@ class AskUserTool(BaseTool):
         return (
             "Ask the user a clarifying question mid-task and wait for their response. "
             "Use this when requirements are underspecified, when resolving design ambiguity, or confirming preferences. "
+            "Whenever the question has discrete choices, ALSO pass an 'options' list of concrete answers — they are "
+            "shown as a numbered menu the user can pick from, and the user can still type a custom answer. "
             "Do NOT stop or end your turn if you need input; call this tool to pause, get the user's answer, and continue autonomously."
         )
 
@@ -34,6 +36,15 @@ class AskUserTool(BaseTool):
             "question": {
                 "type": "string",
                 "description": "The clear question or decision needed from the user.",
+            },
+            "options": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": (
+                    "Optional list of suggested answer choices for the user to pick by number. "
+                    "Provide concrete options whenever the question has discrete choices. "
+                    "The user can select a number OR type their own custom answer."
+                ),
             },
         }
 
@@ -47,15 +58,38 @@ class AskUserTool(BaseTool):
     def needs_permissions(self, input_args: Dict[str, Any]) -> bool:
         return False
 
-    async def call(self, question: str, **kwargs) -> str:
-        """Pause execution, prompt user in terminal, and return their answer."""
+    async def call(self, question: str, options=None, **kwargs) -> str:
+        """Pause execution, present the question (+ optional choices), and return the answer."""
         if not question:
             return "Error: Question parameter is required."
 
+        # Normalize options to a clean list of strings.
+        opts = []
+        if isinstance(options, (list, tuple)):
+            opts = [str(o).strip() for o in options if str(o).strip()]
+        elif isinstance(options, str) and options.strip():
+            opts = [options.strip()]
+
         def _ask():
             console.print("\n")
-            console.print(Panel(f"[bold white]{question}[/bold white]", title="[bold yellow]❓ Agent Clarification Needed[/bold yellow]", border_style="yellow"))
-            return Prompt.ask(" [bold yellow]Your Answer[/bold yellow]").strip()
+            body = f"[bold white]{question}[/bold white]"
+            if opts:
+                body += "\n"
+                for idx, o in enumerate(opts, 1):
+                    body += f"\n  [bold cyan]{idx}.[/bold cyan] {o}"
+                body += "\n\n[dim]Enter a number to choose, or type your own answer.[/dim]"
+            console.print(Panel(
+                body,
+                title="[bold yellow]\u2753 Agent Clarification Needed[/bold yellow]",
+                border_style="yellow",
+            ))
+            reply = Prompt.ask(" [bold yellow]Your Answer[/bold yellow]").strip()
+            # A bare number selects the matching option; anything else is a custom answer.
+            if opts and reply.isdigit():
+                n = int(reply)
+                if 1 <= n <= len(opts):
+                    return opts[n - 1]
+            return reply
 
         # Pause the REPL's live spinner while we read input so it doesn't fight
         # the prompt for the terminal, then restore it.
@@ -66,8 +100,6 @@ class AskUserTool(BaseTool):
 
         paused = ui_state.pause_status() if ui_state else None
         try:
-            # Run the blocking prompt in an executor thread to keep the async
-            # loop responsive while waiting for the user's answer.
             user_reply = await asyncio.get_event_loop().run_in_executor(None, _ask)
         finally:
             if ui_state:

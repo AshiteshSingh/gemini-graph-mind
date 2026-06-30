@@ -87,7 +87,7 @@ SYSTEM_INSTRUCTION = (
     "8. Use architect to plan large features before implementing them.\n"
     "9. Use browser_action to control a real web browser (open URL, click, type, scroll, screenshot like a human).\n"
     "10. Use read_url_content to quickly fetch and read full text from documentation or search result URLs.\n"
-    "11. Use ask_user whenever you need user clarification or feedback mid-task. Do NOT stop your turn to ask a question; call ask_user instead.\n"
+    "11. Use ask_user whenever you need user clarification or feedback mid-task. Do NOT stop your turn to ask a question; call ask_user instead. When the question has discrete choices, pass an 'options' list so the user gets a numbered menu (they can also type a custom answer).\n"
     "12. NEVER run long-running blocking commands without a short timeout. Server start commands must use timeout=5 or less."
 )
 

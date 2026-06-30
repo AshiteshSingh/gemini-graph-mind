@@ -389,17 +389,13 @@ def print_banner():
 
 
 def render_status_footer():
-    """Render a subtle session-usage line after a turn.
+    """Per-turn status footer is intentionally disabled.
 
-    The model now lives in the persistent input toolbar, so this footer is kept
-    minimal: just tokens + estimated cost, and only once there's actual usage.
+    Token/cost are no longer printed after every turn (the user found it noisy);
+    the model name lives in the input toolbar/footer instead. Use /tokens, /cost
+    or /status to see usage on demand.
     """
-    tracker = get_tracker()
-    if getattr(tracker, "total_tokens", 0) <= 0:
-        return
-    sep = " \u00b7 "
-    line = f"{tracker.total_tokens:,} tokens{sep}~${tracker.total_cost_usd:.4f}"
-    console.print(f"  [app.muted]{line}[/app.muted]")
+    return
 
 
 # ─────────────────────────────────────────────────────────────────────────────
