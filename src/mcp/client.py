@@ -67,6 +67,27 @@ def is_sdk_available() -> bool:
     return _MCP_AVAILABLE
 
 
+#: Environment variables forwarded to MCP server subprocesses by default. Kept
+#: deliberately small so secrets in the parent environment are not leaked to
+#: third-party server processes. Servers that need more must declare it via
+#: their ``env`` config block.
+_BASELINE_ENV_VARS = (
+    "PATH", "PATHEXT", "SYSTEMROOT", "SYSTEMDRIVE", "WINDIR", "TEMP", "TMP",
+    "HOME", "HOMEPATH", "HOMEDRIVE", "USERPROFILE", "LANG", "LC_ALL", "TZ",
+    "COMSPEC", "PYTHONIOENCODING", "APPDATA", "LOCALAPPDATA",
+)
+
+
+def _baseline_env() -> Dict[str, str]:
+    """Return a minimal, secret-free environment for spawning MCP servers."""
+    env: Dict[str, str] = {}
+    for key in _BASELINE_ENV_VARS:
+        val = os.environ.get(key)
+        if val is not None:
+            env[key] = val
+    return env
+
+
 def notices() -> List[str]:
     """Return a copy of the notices collected by the most recent ``connect_all``."""
     return list(_NOTICES)
@@ -246,7 +267,11 @@ class MCPConnection:
         if not command:
             raise ValueError(f"MCP server '{self.name}' is missing a 'command'")
 
-        env = dict(os.environ)
+        # Build a MINIMAL environment for the server subprocess rather than
+        # leaking the entire parent environment (API keys, cloud creds, tokens).
+        # Only a small safe baseline plus the server's explicitly-declared env
+        # is forwarded.
+        env = _baseline_env()
         extra_env = self.config.get("env")
         if isinstance(extra_env, dict):
             env.update({str(k): str(v) for k, v in extra_env.items()})

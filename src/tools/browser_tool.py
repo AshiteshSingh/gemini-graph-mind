@@ -8,6 +8,7 @@ import asyncio
 import os
 from typing import Any, Dict, Optional
 from src.tools.base_tool import BaseTool
+from src import security
 
 # Global browser state to maintain session across multiple tool calls
 _pw_instance = None
@@ -73,9 +74,10 @@ class BrowserTool(BaseTool):
     @property
     def description(self) -> str:
         return (
-            "Control a web browser like a real human with developer tools access. Can open visible browser windows, navigate URLs, "
+            "Control a web browser like a real human. Can open visible browser windows, navigate URLs, "
             "click buttons/links, type text into input boxes, scroll pages, extract text content, take screenshots, "
-            "inspect browser developer console logs and page errors ('console'), and execute arbitrary JavaScript in the developer console ('evaluate')."
+            "and inspect browser developer console logs and page errors ('console'). "
+            "The 'evaluate' action runs JavaScript on the page and requires explicit user approval each time."
         )
 
     @property
@@ -125,7 +127,29 @@ class BrowserTool(BaseTool):
         return False
 
     def needs_permissions(self, input_args: Dict[str, Any]) -> bool:
-        return False
+        # Browser actions can navigate to arbitrary sites, interact with
+        # authenticated sessions, write files (screenshot), and run JavaScript.
+        # Always route through the Permission_Check.
+        return True
+
+    async def _confirm_evaluate(self, script: str) -> bool:
+        """Prompt the user to approve running arbitrary JavaScript on the page."""
+        def _get_approval():
+            from rich.console import Console
+            from rich.prompt import Prompt
+            con = Console(highlight=False)
+            preview = script if len(script) <= 500 else script[:500] + " ..."
+            con.print(
+                "\n[bold red][SECURITY] Agent wants to run JavaScript in the browser:[/bold red]"
+            )
+            con.print(f"[yellow]{preview}[/yellow]")
+            try:
+                return Prompt.ask(" [bold yellow]Allow? (y/n)[/bold yellow]").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                return "n"
+
+        answer = await asyncio.get_event_loop().run_in_executor(None, _get_approval)
+        return answer == "y"
 
     async def call(self, action: str, url: str = "", selector: str = "", text: str = "", script: str = "", direction: str = "down", path: str = "browser_shot.png", headless: bool = False, **kwargs) -> str:
         global _pw_instance, _browser_instance, _page_instance, _console_logs, _page_errors
@@ -148,6 +172,9 @@ class BrowserTool(BaseTool):
                     return "Error: URL is required for 'goto' action."
                 if not url.startswith("http://") and not url.startswith("https://"):
                     url = "https://" + url
+                ok, reason = security.validate_outbound_url(url)
+                if not ok:
+                    return f"Blocked navigation: {reason}"
                 await page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 title = await page.title()
                 return f"Navigated to {url}. Page Title: '{title}'."
@@ -183,6 +210,9 @@ class BrowserTool(BaseTool):
 
             elif action == "screenshot":
                 abs_path = os.path.abspath(path)
+                ok, reason = security.validate_file_access(abs_path, write=True)
+                if not ok:
+                    return f"Blocked screenshot: {reason}"
                 await page.screenshot(path=abs_path, full_page=False)
                 return f"Screenshot saved to {abs_path}."
 
@@ -202,8 +232,15 @@ class BrowserTool(BaseTool):
                 script_to_run = script or text or selector or kwargs.get("script", "")
                 if not script_to_run:
                     return "Error: 'script' parameter is required for 'evaluate' action."
+                # Arbitrary JavaScript can read auth tokens/cookies from a logged-in
+                # session and act on the user's behalf. Require an explicit, per-call
+                # confirmation (unless running fully autonomous).
+                if not security.is_autonomous():
+                    approval = await self._confirm_evaluate(script_to_run)
+                    if not approval:
+                        return "JavaScript evaluation rejected by user."
                 result = await page.evaluate(script_to_run)
-                return f"Developer Console Evaluation Result:\n{result}"
+                return f"JavaScript Evaluation Result:\n{result}"
 
             else:
                 return f"Error: Unknown action '{action}'."

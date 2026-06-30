@@ -13,6 +13,7 @@ from typing import Any, Dict, Optional
 
 from .base_tool import BaseTool
 from .file_read_tool import add_line_numbers
+from src import security
 
 N_LINES_SNIPPET = 4
 
@@ -82,6 +83,9 @@ class FileEditTool(BaseTool):
     async def call(self, file_path: str, old_string: str, new_string: str) -> str:
         """Apply the edit to the file."""
         try:
+            ok, reason = security.validate_file_access(file_path, write=True)
+            if not ok:
+                return f"Error: {reason}"
             full_path = os.path.abspath(file_path)
 
             # Case 1: Create new file

@@ -8,6 +8,7 @@ import requests
 from bs4 import BeautifulSoup
 from typing import Any, Dict
 from src.tools.base_tool import BaseTool
+from src import security
 
 
 class UrlReadTool(BaseTool):
@@ -51,15 +52,42 @@ class UrlReadTool(BaseTool):
         if not url.startswith("http://") and not url.startswith("https://"):
             url = "https://" + url
 
+        # SSRF protection: refuse internal/metadata/private destinations.
+        ok, reason = security.validate_outbound_url(url)
+        if not ok:
+            return f"Blocked request: {reason}"
+
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36 OmniDev/2.0",
             "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         }
 
         try:
-            response = requests.get(url, headers=headers, timeout=15)
+            # Follow redirects manually so each hop is re-validated against the
+            # SSRF guard (a public URL must not redirect us to an internal one).
+            response = None
+            current = url
+            for _hop in range(5):
+                ok, reason = security.validate_outbound_url(current)
+                if not ok:
+                    return f"Blocked redirect: {reason}"
+                response = requests.get(
+                    current, headers=headers, timeout=15, allow_redirects=False
+                )
+                if response.is_redirect or response.status_code in (301, 302, 303, 307, 308):
+                    location = response.headers.get("Location")
+                    if not location:
+                        break
+                    current = requests.compat.urljoin(current, location)
+                    continue
+                break
+            else:
+                return "Too many redirects."
+
+            if response is None:
+                return f"Failed to fetch URL {url}."
             if response.status_code != 200:
-                return f"Failed to fetch URL {url}. HTTP Status Code: {response.status_code}"
+                return f"Failed to fetch URL {current}. HTTP Status Code: {response.status_code}"
 
             content_type = response.headers.get("Content-Type", "").lower()
             if "application/json" in content_type:

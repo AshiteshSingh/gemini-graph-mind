@@ -24,6 +24,7 @@ from collections import namedtuple
 from typing import Any, Dict, Optional, Union
 
 from . import config_store
+from . import security
 
 # ---------------------------------------------------------------------------
 # Safe commands (Req 10.2) - mirrors permissions.ts SAFE_COMMANDS exactly
@@ -65,9 +66,10 @@ NO_PERMISSION_TOOLS = {
     "ask_user",
 }
 
-#: Tokens that indicate command chaining/substitution and therefore prevent
-#: safe prefix verification (Req 10.5).
-_INJECTION_TOKENS = (";", "&&", "||", "|", "$(", "`")
+#: Tokens that indicate command chaining/substitution/redirection and therefore
+#: prevent safe prefix verification (Req 10.5). Imported from the central
+#: security module so detection is consistent across the codebase.
+_INJECTION_TOKENS = security.SHELL_METACHARACTERS
 
 #: Commands whose first *two* tokens form a meaningful prefix (e.g. "git commit").
 _MULTI_WORD_COMMANDS = {
@@ -157,17 +159,10 @@ def _resolve_tool_name(tool: Union[str, Any]) -> str:
 def _is_autonomous(ctx: Any = None) -> bool:
     """Return whether Autonomous_Mode is active (Req 10.8).
 
-    Autonomous mode is signalled either by the ``OMNI_AUTONOMOUS`` environment
-    variable or by a truthy ``autonomous`` attribute/key on the supplied context.
+    Delegates to the central :func:`src.security.is_autonomous` so all modules
+    agree on what "autonomous" means.
     """
-    env = os.environ.get("OMNI_AUTONOMOUS", "")
-    if env and env.strip().lower() not in ("", "0", "false", "no"):
-        return True
-    if ctx is None:
-        return False
-    if isinstance(ctx, dict):
-        return bool(ctx.get("autonomous"))
-    return bool(getattr(ctx, "autonomous", False))
+    return security.is_autonomous(ctx)
 
 
 def _allowed_tools() -> list:
@@ -181,8 +176,8 @@ def _allowed_tools() -> list:
 
 
 def _has_injection(command: str) -> bool:
-    """Return True if ``command`` contains chaining/substitution tokens."""
-    return any(token in command for token in _INJECTION_TOKENS)
+    """Return True if ``command`` contains chaining/substitution/redirection tokens."""
+    return security.has_shell_metacharacters(command)
 
 
 def _command_text(input_args: Dict[str, Any]) -> str:
@@ -194,7 +189,13 @@ def _command_text(input_args: Dict[str, Any]) -> str:
 
 
 def _is_safe_command(command: str) -> bool:
-    """Return True when ``command`` is, or begins with, a Safe_Command (Req 10.2)."""
+    """Return True when ``command`` is, or begins with, a Safe_Command (Req 10.2).
+
+    A command containing shell metacharacters is never safe: chaining or
+    substitution could smuggle arbitrary commands behind a safe-looking prefix.
+    """
+    if security.has_shell_metacharacters(command):
+        return False
     stripped = command.strip()
     for safe in SAFE_COMMANDS:
         if stripped == safe or stripped.startswith(safe + " "):

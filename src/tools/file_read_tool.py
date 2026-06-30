@@ -12,6 +12,7 @@ import base64
 from typing import Any, Dict, Optional
 
 from .base_tool import BaseTool
+from src import security
 
 MAX_OUTPUT_BYTES = 256 * 1024  # 0.25MB
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".webp"}
@@ -76,6 +77,12 @@ class FileReadTool(BaseTool):
     async def call(self, path: str, offset: int = 1, limit: Optional[int] = None) -> str:
         """Read the file and return its content."""
         try:
+            # Sandbox: refuse reads outside the workspace and reads of
+            # credential/secret files (SSRF-style exfiltration protection).
+            ok, reason = security.validate_file_access(path, write=False)
+            if not ok:
+                return f"Error: {reason}"
+
             if not os.path.exists(path):
                 # Try to find similar file
                 dir_name = os.path.dirname(path) or "."

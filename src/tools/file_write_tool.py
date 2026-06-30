@@ -8,6 +8,7 @@ import os
 from typing import Any, Dict
 
 from .base_tool import BaseTool
+from src import security
 
 
 class FileWriteTool(BaseTool):
@@ -50,6 +51,9 @@ class FileWriteTool(BaseTool):
     async def call(self, path: str, content: str) -> str:
         """Write content to a new file."""
         try:
+            ok, reason = security.validate_file_access(path, write=True)
+            if not ok:
+                return f"Error: {reason}"
             abs_path = os.path.abspath(path)
             os.makedirs(os.path.dirname(abs_path), exist_ok=True)
             with open(abs_path, "w", encoding="utf-8") as f:
