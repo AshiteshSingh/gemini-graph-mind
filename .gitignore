@@ -11,3 +11,6 @@ build/
 
 # Kiro spec workspace (local planning artifacts, not part of the repo)
 .kiro/
+
+# Scratch / reference repo (local only, not part of the published project)
+scratch_repo/
