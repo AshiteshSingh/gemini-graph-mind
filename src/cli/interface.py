@@ -998,8 +998,10 @@ async def main():
             "completion-menu.completion": "bg:default #ffffff noreverse",
             "completion-menu.completion.current": "bg:default #E5484D bold noreverse",
             "desc": "#6b7280",
-            "scrollbar.background": "bg:#1a1a1a",
-            "scrollbar.button": "bg:#5a2a2e",
+            # Hide the completion-menu scrollbar (blend into the background) —
+            # the red track/button looked cheap.
+            "scrollbar.background": "bg:default",
+            "scrollbar.button": "bg:default",
         })
 
         completer = SlashCommandCompleter(commands_list)
