@@ -289,6 +289,73 @@ def current_model() -> str:
     return os.environ.get("OMNI_MODEL", "groq/openai/gpt-oss-120b").strip()
 
 
+def pretty_model(model: str = "") -> str:
+    """Turn a litellm model id into a friendly label, e.g.
+    ``vertex_ai/gemini-2.5-flash`` -> ``Gemini 2.5 Flash``.
+    """
+    raw = (model or current_model()).strip()
+    name = raw.split("/")[-1] if "/" in raw else raw
+    name = name.replace("-", " ").replace("_", " ").strip()
+    words = []
+    for w in name.split():
+        if any(c.isdigit() for c in w):
+            words.append(w)
+        elif len(w) <= 3:
+            words.append(w.upper())
+        else:
+            words.append(w.capitalize())
+    label = " ".join(words) if words else raw
+    return label.replace("Gpt", "GPT").replace("Oss", "OSS").replace("Ai", "AI")
+
+
+# Friendly one-line descriptions for the slash-command menu. Anything not listed
+# falls back to a generic label (covers MCP-provided commands).
+COMMAND_DESCRIPTIONS = {
+    "/clear": "Clear the screen and current conversation",
+    "/compact": "Summarize then compact the conversation",
+    "/init": "Create an AGENTS.md for this project",
+    "/doctor": "Diagnose environment, API keys, and memory health",
+    "/review": "Review staged changes or a git diff",
+    "/bug": "Report a bug from inside the CLI",
+    "/resume": "Resume or fork a past conversation",
+    "/graph": "Build or query the codebase knowledge graph",
+    "/memify": "Consolidate & improve long-term memory",
+    "/improve": "Consolidate & improve long-term memory",
+    "/consolidate": "Consolidate & improve long-term memory",
+    "/forget": "Forget stored memories",
+    "/memory": "Search the long-term memory store",
+    "/index": "Index this codebase into graph memory",
+    "/model": "Switch the active model",
+    "/api_key": "Add an API key to your .env",
+    "/autonomous": "Toggle autonomous (no-permission) mode",
+    "/config": "View or edit configuration",
+    "/ctx_viz": "Visualize the current context window",
+    "/tokens": "Show token usage for this session",
+    "/cost": "Show estimated session cost",
+    "/status": "Show session status",
+    "/history": "View command history",
+    "/commit": "Create a git commit",
+    "/pr_comments": "Fetch and summarize PR comments",
+    "/release_notes": "Generate release notes from git history",
+    "/terminal_setup": "Configure terminal integration",
+    "/pwd": "Print the working directory",
+    "/ls": "List directory contents",
+    "/help": "Show all commands and shortcuts",
+    "?": "Show shortcuts and help",
+    "exit": "Exit Omni-Dev",
+    "quit": "Exit Omni-Dev",
+}
+
+
+def command_meta(cmd: str) -> str:
+    """Return a friendly description for a slash command (with a fallback)."""
+    if cmd in COMMAND_DESCRIPTIONS:
+        return COMMAND_DESCRIPTIONS[cmd]
+    if cmd.startswith("/"):
+        return "Run the " + cmd[1:].replace("-", " ").replace("_", " ") + " command"
+    return ""
+
+
 def print_banner():
     """Print the compact themed banner + a status footer line."""
     console.print()
@@ -305,15 +372,17 @@ def print_banner():
 
 
 def render_status_footer():
-    """Render the persistent status footer after a turn (Req 15.5)."""
+    """Render a subtle session-usage line after a turn.
+
+    The model now lives in the persistent input toolbar, so this footer is kept
+    minimal: just tokens + estimated cost, and only once there's actual usage.
+    """
     tracker = get_tracker()
-    console.print()
-    console.print(
-        status_footer(
-            current_model(), get_git_branch(),
-            tracker.total_tokens, tracker.total_cost_usd, console=console,
-        )
-    )
+    if getattr(tracker, "total_tokens", 0) <= 0:
+        return
+    sep = " \u00b7 "
+    line = f"{tracker.total_tokens:,} tokens{sep}~${tracker.total_cost_usd:.4f}"
+    console.print(f"  [app.muted]{line}[/app.muted]")
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -819,21 +888,37 @@ async def main():
         from prompt_toolkit import PromptSession
         from prompt_toolkit.completion import Completer, Completion
         from prompt_toolkit.history import InMemoryHistory
+        from prompt_toolkit.formatted_text import HTML
+        from prompt_toolkit.styles import Style
+        from prompt_toolkit.application import get_app
+        import html as _html
 
         class SlashCommandCompleter(Completer):
+            """Slash-command completer that shows each command with its
+            description inline (command on the left, muted description on the
+            right) — like modern agent CLIs."""
+
             def __init__(self, cmds):
                 self.cmds = sorted(cmds)
 
             def get_completions(self, document, complete_event):
                 text = document.text_before_cursor.lstrip()
                 if text.startswith("/"):
-                    for cmd in self.cmds:
-                        if cmd.startswith(text.lower()):
-                            yield Completion(cmd, start_position=-len(text))
+                    matches = [c for c in self.cmds if c.startswith(text.lower())]
                 elif text.lower() in ("e", "ex", "exi", "exit", "q", "qu", "qui", "quit", "?"):
-                    for cmd in ("exit", "quit", "?"):
-                        if cmd.startswith(text.lower()):
-                            yield Completion(cmd, start_position=-len(text))
+                    matches = [c for c in ("exit", "quit", "?") if c.startswith(text.lower())]
+                else:
+                    return
+                # Align descriptions into a column.
+                width = max((len(c) for c in matches), default=0) + 3
+                for cmd in matches:
+                    desc = command_meta(cmd)
+                    pad = " " * max(2, width - len(cmd))
+                    disp = HTML(
+                        f'<cmd>{_html.escape(cmd)}</cmd>{pad}'
+                        f'<desc>{_html.escape(desc)}</desc>'
+                    )
+                    yield Completion(cmd, start_position=-len(text), display=disp)
 
         # Seed prompt history so up-arrow recalls past inputs (Req 12.x).
         pt_history = InMemoryHistory()
@@ -845,18 +930,75 @@ async def main():
             pass
 
         def _bottom_toolbar():
-            tracker = get_tracker()
-            sep = " \u00b7 "
-            return (
-                f"{current_model()}{sep}{get_git_branch()}{sep}"
-                f"{tracker.total_tokens:,} tokens{sep}~${tracker.total_cost_usd:.4f}"
-            )
+            # Clean footer: a top rule line, then a hint (left) + model (right).
+            # While the completion menu is open, show navigation hints instead.
+            try:
+                app = get_app()
+                cols = max(20, app.output.get_size().columns)
+            except Exception:
+                app = None
+                cols = 80
+
+            completing = False
+            try:
+                completing = app is not None and app.current_buffer.complete_state is not None
+            except Exception:
+                completing = False
+
+            model = pretty_model()
+            if completing:
+                left = "\u2191/\u2193 Navigate \u00b7 enter Select \u00b7 tab Complete \u00b7 esc Cancel"
+            else:
+                left = "? for shortcuts"
+
+            pad = max(1, cols - len(left) - len(model) - 1)
+            rule = "\u2500" * (cols - 1)
+            return [
+                ("class:tb.rule", rule + "\n"),
+                ("class:tb.hint", left),
+                ("class:tb.pad", " " * pad),
+                ("class:tb.model", model),
+            ]
+
+        ptk_style = Style.from_dict({
+            "prompt": "#7C9CF0 bold",
+            # Footer: disable the default reversed bar so it blends with the theme.
+            "bottom-toolbar": "noreverse bg:default",
+            "tb.rule": "#3a3f4b",
+            "tb.hint": "#8A8F98",
+            "tb.pad": "",
+            "tb.model": "#8A8F98",
+            # Slash-command menu.
+            "completion-menu": "bg:default",
+            "completion-menu.completion": "bg:default #c8ccd4",
+            "completion-menu.completion.current": "bg:#2a2f3a #ffffff",
+            "cmd": "#7C9CF0",
+            "desc": "#6b7280",
+            "scrollbar.background": "bg:#1a1a1a",
+            "scrollbar.button": "bg:#3a3f4b",
+        })
 
         completer = SlashCommandCompleter(commands_list)
-        session = PromptSession(completer=completer, history=pt_history, bottom_toolbar=_bottom_toolbar)
+        session = PromptSession(
+            completer=completer,
+            history=pt_history,
+            bottom_toolbar=_bottom_toolbar,
+            style=ptk_style,
+            complete_while_typing=True,
+        )
         use_prompt_toolkit = True
     except Exception:
         use_prompt_toolkit = False
+        try:
+            console.print(
+                "  [status.warn]Rich input disabled (prompt_toolkit not available) — "
+                "slash-command menu won't show.[/status.warn]"
+            )
+            console.print(
+                "  [app.muted]Fix: pip install prompt_toolkit  (or re-run the installer).[/app.muted]"
+            )
+        except Exception:
+            pass
 
     while True:
         try:
@@ -866,7 +1008,8 @@ async def main():
                 # session.prompt() inside a thread executor breaks keyboard input
                 # on Windows (the win32 console reader must run on the main
                 # thread), which left the prompt unable to accept typing.
-                user_input = await session.prompt_async("> ")
+                from prompt_toolkit.formatted_text import HTML as _HTML
+                user_input = await session.prompt_async(_HTML('<prompt>&gt;</prompt> '))
             else:
                 from rich.prompt import Prompt
                 user_input = await asyncio.get_event_loop().run_in_executor(

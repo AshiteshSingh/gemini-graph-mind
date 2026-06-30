@@ -82,6 +82,9 @@ Info "Installing dependencies (this can take a minute) ..."
 [void](Invoke-Quiet $venvPython @("-m", "pip", "install", "--upgrade", "pip"))
 $code = Invoke-Quiet $venvPython @("-m", "pip", "install", "-r", (Join-Path $InstallDir "requirements.txt"))
 if ($code -ne 0) { Warn "pip reported issues; the CLI may still run. Try 'omni' then /doctor." }
+# Safety net: guarantee the critical UI deps even if the bulk install above was
+# partial — without prompt_toolkit the slash-command menu silently disabled.
+[void](Invoke-Quiet $venvPython @("-m", "pip", "install", "--upgrade", "prompt_toolkit", "rich"))
 
 # --- Install the `omni` launcher on PATH -----------------------------------
 New-Item -ItemType Directory -Force -Path $BinDir | Out-Null
