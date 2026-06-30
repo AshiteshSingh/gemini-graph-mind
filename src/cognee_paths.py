@@ -263,6 +263,24 @@ def backup_databases(label: str = "") -> str:
         return ""
 
 
+def cloud_embedding_for_cli() -> tuple[str, str, int, str]:
+    """Pick the cloud embedding model that matches the CLI's provider (OMNI_MODEL),
+    so 'same as the CLI' uses the same cloud account/credentials.
+    Returns (provider, model, dimensions, endpoint).
+    """
+    model = (os.environ.get("OMNI_MODEL") or "").lower()
+    if model.startswith("gemini/"):
+        return ("gemini", "text-embedding-004", 768, "")
+    if model.startswith("openai/"):
+        return ("openai", "text-embedding-3-small", 1536, "")
+    if model.startswith("vertex_ai/"):
+        return ("custom", "vertex_ai/text-embedding-004", 768, "")
+    if model.startswith("mistral/"):
+        return ("mistral", "mistral-embed", 1024, "")
+    # Fallback: the default cloud (Vertex) preset.
+    return EMBEDDING_PRESETS["cloud"]
+
+
 # IMPORTANT ORDERING: set the LLM/embedding env FIRST, because Cognee caches its
 # config (lru_cache) the moment it is imported. configure_cognee_storage() below
 # imports cognee, so the LLM env must already be in place before that happens.
