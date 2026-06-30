@@ -914,8 +914,11 @@ async def main():
                 for cmd in matches:
                     desc = command_meta(cmd)
                     pad = " " * max(2, width - len(cmd))
+                    # The command carries NO explicit color (just bold) so the
+                    # completion-menu base style colors it: white normally, red
+                    # when selected. The description is always muted grey.
                     disp = HTML(
-                        f'<cmd>{_html.escape(cmd)}</cmd>{pad}'
+                        f'<b>{_html.escape(cmd)}</b>{pad}'
                         f'<desc>{_html.escape(desc)}</desc>'
                     )
                     yield Completion(cmd, start_position=-len(text), display=disp)
@@ -968,11 +971,12 @@ async def main():
             "tb.hint": "#8A8F98",
             "tb.pad": "",
             "tb.model": "#8A8F98",
-            # Slash-command menu.
+            # Slash-command menu: command WHITE by default, RED when selected,
+            # with NO full-width highlight bar (bg stays default) — the selection
+            # color reflects only on the command text, not the whole row.
             "completion-menu": "bg:default",
-            "completion-menu.completion": "bg:default #c8ccd4",
-            "completion-menu.completion.current": "bg:#3a1f22 #ffffff",
-            "cmd": "#E5484D",
+            "completion-menu.completion": "bg:default #ffffff",
+            "completion-menu.completion.current": "bg:default #E5484D bold",
             "desc": "#6b7280",
             "scrollbar.background": "bg:#1a1a1a",
             "scrollbar.button": "bg:#5a2a2e",
