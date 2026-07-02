@@ -1952,12 +1952,16 @@ async def handle_resume(agent, transcript_state, session, use_prompt_toolkit):
 # the active prompt_toolkit session (as /memory and /resume already do).
 # ─────────────────────────────────────────────────────────────────────────────
 async def _ask_line(session, use_prompt_toolkit, prompt_text, is_password=False):
-    if use_prompt_toolkit and session is not None:
+    if use_prompt_toolkit:
         try:
-            ans = await session.prompt_async(prompt_text, is_password=is_password)
+            from prompt_toolkit import PromptSession
+            # Use a fresh session to avoid completer/toolbar interference
+            temp_session = PromptSession()
+            ans = await temp_session.prompt_async(prompt_text, is_password=is_password)
             return (ans or "").strip()
         except Exception:
             pass
+            
     from rich.prompt import Prompt as RPrompt
     label = prompt_text.rstrip(": ").strip() or prompt_text
     ans = await asyncio.get_event_loop().run_in_executor(
